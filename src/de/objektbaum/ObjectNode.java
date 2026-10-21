@@ -9,7 +9,10 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Ein Objekt mit beliebig vielen Feldern (Key/Value) und beliebig vielen Unterobjekten.
+ * Ein Objekt mit Typ, beliebig vielen Feldern (Key/Value) und beliebig vielen Unterobjekten.
+ *
+ * <p>Unterobjekte können sofort angehängt werden ({@link #add}, {@link #child}) oder per
+ * {@link #lazy(ChildLoader)} erst beim ersten Zugriff auf {@link #children()} geladen werden.
  */
 public final class ObjectNode {
 
@@ -20,7 +23,10 @@ public final class ObjectNode {
     private final ObjectType type;
     private final Map<String, Object> fields = new LinkedHashMap<>();
     private final List<ObjectNode> children = new ArrayList<>();
-    private ObjectNode parent;
+    private volatile ObjectNode parent;
+
+    private ChildLoader loader;
+    private volatile boolean loaded = true;
 
     public ObjectNode(String name, ObjectType type) {
         this.id = ID_COUNTER.incrementAndGet();
@@ -28,19 +34,32 @@ public final class ObjectNode {
         this.type = type == null ? ObjectType.SONSTIGES : type;
     }
 
+    // ------------------------------------------------------------------ Felder
+
     /** Setzt ein Feld. Gibt this zurück, damit Aufrufe verkettet werden können. */
-    public ObjectNode field(String key, Object value) {
+    public synchronized ObjectNode field(String key, Object value) {
         fields.put(key, value);
         return this;
     }
 
+    public synchronized Map<String, Object> fields() {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(fields));
+    }
+
+    // ------------------------------------------------------------ Unterobjekte
+
     /** Hängt ein Unterobjekt an und gibt this zurück. */
     public ObjectNode add(ObjectNode child) {
-        if (child.parent != null) {
-            child.parent.children.remove(child);
+        ObjectNode oldParent = child.parent;
+        if (oldParent != null && oldParent != this) {
+            oldParent.removeChild(child);
         }
-        child.parent = this;
-        children.add(child);
+        synchronized (this) {
+            if (!children.contains(child)) {
+                child.parent = this;
+                children.add(child);
+            }
+        }
         return this;
     }
 
@@ -51,7 +70,7 @@ public final class ObjectNode {
         return child;
     }
 
-    public boolean removeChild(ObjectNode child) {
+    public synchronized boolean removeChild(ObjectNode child) {
         if (children.remove(child)) {
             child.parent = null;
             return true;
@@ -59,12 +78,98 @@ public final class ObjectNode {
         return false;
     }
 
-    /** Sucht ein Objekt mit dieser id in diesem Teilbaum. */
+    /**
+     * Die Unterobjekte. Ist der Knoten lazy und noch nicht geladen, wird jetzt geladen.
+     *
+     * @throws ChildLoadException wenn der Loader scheitert (der Knoten bleibt dann ungeladen)
+     */
+    public List<ObjectNode> children() {
+        ensureLoaded();
+        return loadedChildren();
+    }
+
+    /** Die bereits vorhandenen Unterobjekte, ohne einen Ladevorgang auszulösen. */
+    public synchronized List<ObjectNode> loadedChildren() {
+        return List.copyOf(children);
+    }
+
+    // ------------------------------------------------------------ Lazy Loading
+
+    /**
+     * Macht diesen Knoten lazy: die Kinder werden erst beim ersten Zugriff über den Loader geholt.
+     * Bereits per {@link #add} angehängte Kinder bleiben erhalten.
+     */
+    public synchronized ObjectNode lazy(ChildLoader loader) {
+        this.loader = loader;
+        this.loaded = loader == null;
+        return this;
+    }
+
+    /** Lädt die Kinder, falls noch nicht geschehen. Mehrere Threads laden nie doppelt. */
+    public void ensureLoaded() {
+        if (loaded) {
+            return;
+        }
+        synchronized (this) {
+            if (loaded) {
+                return;
+            }
+            List<ObjectNode> result;
+            try {
+                result = loader.load(this);
+            } catch (Exception e) {
+                throw new ChildLoadException(this, e);
+            }
+            if (result != null) {
+                for (ObjectNode c : result) {
+                    add(c);
+                }
+            }
+            loaded = true;
+        }
+    }
+
+    /**
+     * Verwirft die geladenen Kinder, damit sie beim nächsten Zugriff neu geladen werden.
+     * Wirkt nur bei lazy Knoten.
+     */
+    public synchronized void reload() {
+        if (loader == null) {
+            return;
+        }
+        for (ObjectNode c : children) {
+            c.parent = null;
+        }
+        children.clear();
+        loaded = false;
+    }
+
+    /** true, wenn dieser Knoten einen Loader hat. */
+    public synchronized boolean isLazy() {
+        return loader != null;
+    }
+
+    /** true, wenn die Kinder vorhanden sind (nicht lazy, oder bereits geladen). */
+    public boolean isLoaded() {
+        return loaded;
+    }
+
+    /** true, wenn es Kinder gibt oder geben könnte (noch ungeladen). Löst kein Laden aus. */
+    public synchronized boolean mayHaveChildren() {
+        return !loaded || !children.isEmpty();
+    }
+
+    // ---------------------------------------------------------------- Abfragen
+
+    /**
+     * Sucht ein Objekt mit dieser id im bereits geladenen Teil des Baums.
+     * Löst kein Laden aus.
+     */
     public Optional<ObjectNode> find(int searchId) {
         if (id == searchId) {
             return Optional.of(this);
         }
-        for (ObjectNode c : children) {
+        for (ObjectNode c : loadedChildren()) {
             Optional<ObjectNode> found = c.find(searchId);
             if (found.isPresent()) {
                 return found;
@@ -91,23 +196,13 @@ public final class ObjectNode {
         return false;
     }
 
-    public int countDescendants() {
-        int count = children.size();
-        for (ObjectNode c : children) {
-            count += c.countDescendants();
-        }
-        return count;
-    }
-
     public int id() { return id; }
     public String name() { return name; }
     public ObjectType type() { return type; }
     public ObjectNode parent() { return parent; }
-    public Map<String, Object> fields() { return Collections.unmodifiableMap(fields); }
-    public List<ObjectNode> children() { return Collections.unmodifiableList(children); }
 
     @Override
     public String toString() {
-        return name + " [" + type + "] " + fields;
+        return name + " [" + type + "] " + fields();
     }
 }

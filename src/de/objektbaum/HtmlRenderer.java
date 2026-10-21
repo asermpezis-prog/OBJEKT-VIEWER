@@ -39,6 +39,14 @@ public final class HtmlRenderer {
     }
 
     public String render(ObjectNode selected, Layout layout) {
+        // Kinder des gewählten Objekts jetzt laden (lazy), Fehler werden im Main angezeigt.
+        String loadError = null;
+        try {
+            selected.ensureLoaded();
+        } catch (ChildLoadException e) {
+            loadError = e.getMessage();
+        }
+
         StringBuilder sb = new StringBuilder(8192);
         sb.append("<!DOCTYPE html>\n<html lang=\"de\">\n<head>\n<meta charset=\"utf-8\">\n")
           .append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
@@ -63,17 +71,22 @@ public final class HtmlRenderer {
             }
         }
         sb.append("</div>\n<div class=\"head-row\">\n<h1>").append(esc(selected.name()))
-          .append(" ").append(badge(selected.type())).append("</h1>\n")
-          .append("<div class=\"toggle\" role=\"group\" aria-label=\"Tabellen-Layout\">");
+          .append(" ").append(badge(selected.type())).append("</h1>\n<div class=\"actions\">");
+        if (selected.isLazy()) {
+            sb.append("<a class=\"btn\" href=\"").append(href(selected, layout)).append("&amp;reload=1\" ")
+              .append("title=\"Unterobjekte verwerfen und neu laden\">↻ Neu laden</a>");
+        }
+        sb.append("<div class=\"toggle\" role=\"group\" aria-label=\"Tabellen-Layout\">");
         for (Layout l : Layout.values()) {
             sb.append("<a href=\"").append(href(selected, l)).append("\"")
               .append(l == layout ? " class=\"on\" aria-current=\"true\"" : "")
               .append(">").append(l.label).append("</a>");
         }
-        sb.append("</div>\n</div>\n<div class=\"meta\">")
+        List<ObjectNode> kids = selected.loadedChildren();
+        sb.append("</div>\n</div>\n</div>\n<div class=\"meta\">")
           .append(selected.fields().size()).append(" Felder · ")
-          .append(selected.children().size()).append(" direkte Unterobjekte · ")
-          .append(selected.countDescendants()).append(" insgesamt")
+          .append(selected.isLoaded() ? kids.size() + " Unterobjekte" : "Unterobjekte nicht geladen")
+          .append(selected.isLazy() ? " · <span class=\"lazy-tag\">lazy</span>" : "")
           .append("</div>\n</header>\n");
 
         // ---------- Main ----------
@@ -88,14 +101,17 @@ public final class HtmlRenderer {
         sb.append("</section>\n");
 
         sb.append("<section>\n<h2>Unterobjekte</h2>\n");
-        if (selected.children().isEmpty()) {
+        if (loadError != null) {
+            sb.append("<p class=\"error\">").append(esc(loadError)).append(" <a href=\"")
+              .append(href(selected, layout)).append("\">Erneut versuchen</a></p>\n");
+        } else if (kids.isEmpty()) {
             sb.append("<p class=\"empty\">Keine Unterobjekte.</p>\n");
         } else if (layout == Layout.HORIZONTAL) {
-            renderHorizontal(sb, selected.children(), true, layout);
+            renderHorizontal(sb, kids, true, layout);
         } else {
-            for (ObjectNode c : selected.children()) {
+            for (ObjectNode c : kids) {
                 sb.append("<div class=\"card\">\n<h3>").append(link(c, layout, esc(c.name())))
-                  .append(" ").append(badge(c.type())).append(" <small>").append(c.children().size()).append(" Unterobjekte</small></h3>\n");
+                  .append(" ").append(badge(c.type())).append(" <small>").append(childInfo(c)).append("</small></h3>\n");
                 if (c.fields().isEmpty()) {
                     sb.append("<p class=\"empty\">Keine Felder.</p>\n");
                 } else {
@@ -104,22 +120,47 @@ public final class HtmlRenderer {
                 sb.append("</div>\n");
             }
         }
-        sb.append("</section>\n</main>\n</div>\n</body>\n</html>\n");
+        sb.append("</section>\n</main>\n</div>\n<script>").append(JS).append("</script>\n</body>\n</html>\n");
+        return sb.toString();
+    }
+
+    /**
+     * HTML-Fragment mit den Kindern eines Knotens für die Navigation (wird beim Aufklappen
+     * eines lazy Knotens per fetch nachgeladen). Löst das Laden der Kinder aus.
+     */
+    public String renderNavChildren(ObjectNode node, ObjectNode selected, Layout layout) {
+        StringBuilder sb = new StringBuilder(1024);
+        try {
+            List<ObjectNode> kids = node.children();
+            if (kids.isEmpty()) {
+                sb.append("<li class=\"note\">keine Unterobjekte</li>\n");
+            }
+            for (ObjectNode c : kids) {
+                renderNavNode(sb, c, selected, layout);
+            }
+        } catch (ChildLoadException e) {
+            sb.append("<li class=\"note err\">Laden fehlgeschlagen</li>\n");
+        }
         return sb.toString();
     }
 
     // ----- Navigation (Baum) -----
 
+    /** Rendert einen Knoten. Löst selbst kein Laden aus: ungeladene Knoten werden aufklappbar
+     *  dargestellt und holen ihre Kinder erst beim Aufklappen. */
     private void renderNavNode(StringBuilder sb, ObjectNode node, ObjectNode selected, Layout layout) {
         String cls = node == selected ? " class=\"active\"" : "";
         sb.append("<li>");
-        if (node.children().isEmpty()) {
+        if (!node.isLoaded()) {
+            sb.append("<details class=\"lazy\" data-id=\"").append(node.id()).append("\"><summary>")
+              .append(navLink(node, layout, cls)).append("</summary>\n<ul></ul>\n</details>");
+        } else if (node.loadedChildren().isEmpty()) {
             sb.append("<span class=\"leaf\"></span>").append(navLink(node, layout, cls));
         } else {
-            boolean open = node.isAncestorOf(selected) || node.parent() == null;
+            boolean open = node.parent() == null || node.isAncestorOf(selected);
             sb.append("<details").append(open ? " open" : "").append("><summary>")
               .append(navLink(node, layout, cls)).append("</summary>\n<ul>\n");
-            for (ObjectNode c : node.children()) {
+            for (ObjectNode c : node.loadedChildren()) {
                 renderNavNode(sb, c, selected, layout);
             }
             sb.append("</ul>\n</details>");
@@ -130,6 +171,13 @@ public final class HtmlRenderer {
     private String navLink(ObjectNode n, Layout layout, String cls) {
         return "<a href=\"" + href(n, layout) + "\"" + cls + " title=\"" + n.type().label() + "\">"
                 + "<span class=\"ico\">" + n.type().icon() + "</span>" + esc(n.name()) + "</a>";
+    }
+
+    /** Info zu den Kindern eines Unterobjekts, ohne sie zu laden. */
+    private static String childInfo(ObjectNode c) {
+        if (!c.isLoaded()) return "Unterobjekte werden bei Bedarf geladen";
+        int n = c.loadedChildren().size();
+        return n == 1 ? "1 Unterobjekt" : n + " Unterobjekte";
     }
 
     // ----- Tabellen -----
@@ -201,6 +249,28 @@ public final class HtmlRenderer {
         return out.toString();
     }
 
+    /** Lädt die Kinder eines lazy Knotens beim ersten Aufklappen in der Navigation nach. */
+    private static final String JS = """
+        document.addEventListener('toggle', async (ev) => {
+          const d = ev.target;
+          if (!(d instanceof HTMLDetailsElement) || !d.open || !d.classList.contains('lazy') || d.dataset.loaded) return;
+          d.dataset.loaded = '1';
+          const ul = d.querySelector(':scope > ul');
+          ul.innerHTML = '<li class="note">lädt …</li>';
+          const p = new URLSearchParams(location.search);
+          const url = '/nav?id=' + d.dataset.id + '&sel=' + (p.get('id') || '') + '&layout=' + (p.get('layout') || 'v');
+          try {
+            const r = await fetch(url);
+            if (!r.ok) throw new Error(r.status);
+            ul.innerHTML = await r.text();
+            d.classList.remove('lazy');
+          } catch (e) {
+            ul.innerHTML = '<li class="note err">Laden fehlgeschlagen</li>';
+            delete d.dataset.loaded;
+          }
+        }, true);
+        """;
+
     private static final String CSS = """
         :root{--bg:#f6f7f9;--panel:#fff;--nav:#1f2937;--nav-fg:#d1d5db;--nav-hi:#374151;--accent:#2563eb;
               --fg:#111827;--muted:#6b7280;--line:#e5e7eb;--zebra:#f9fafb}
@@ -241,6 +311,14 @@ public final class HtmlRenderer {
         tbody tr:nth-child(even) td{background:var(--zebra)}
         table.kv tbody th{font-weight:600;width:1%}
         .empty{color:var(--muted);font-style:italic}
+        .error{color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px}
+        .actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+        .btn{border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:13px;color:var(--fg)}
+        .btn:hover{text-decoration:none;background:var(--zebra)}
+        .lazy-tag{border:1px dashed var(--muted);border-radius:4px;padding:0 5px;font-size:12px}
+        .tree .note{color:var(--muted);font-size:13px;font-style:italic;padding:2px 8px 2px 22px}
+        .tree .note.err{color:#f87171}
+        .tree details.lazy>summary::before{color:var(--nav-fg)}
         .ico{display:inline-block;width:20px;text-align:center;margin-right:2px}
         .badge{display:inline-block;font-size:12px;font-weight:500;padding:2px 9px;border-radius:999px;
                border:1px solid var(--line);background:var(--zebra);color:var(--fg);vertical-align:middle;white-space:nowrap}

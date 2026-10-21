@@ -34,12 +34,34 @@ ObjectNode abteilung = firma.child("Entwicklung", ObjectType.ABTEILUNG)
 
 Die Typen stehen in `ObjectType.java` und können frei angepasst werden (Name, Anzeigetext, Icon).
 
+## Lazy Loading
+
+Unterobjekte können erst bei Bedarf geladen werden, z. B. aus einer Datenbank:
+
+```java
+firma.child("Archiv", ObjectType.ORDNER)
+        .lazy(parent -> datenbank.ladeKinderVon(parent.name()));   // List<ObjectNode>
+```
+
+- Geladen wird beim ersten Zugriff auf `children()`: wenn das Objekt geöffnet oder in der Navigation aufgeklappt wird.
+- Die Navigation lädt nur, was aufgeklappt wird. Der Rest des Baums bleibt ungeladen.
+- Jeder Knoten wird genau einmal geladen, auch bei gleichzeitigen Zugriffen.
+- Schlägt der Loader fehl, zeigt die Seite die Fehlermeldung; beim nächsten Öffnen wird erneut geladen.
+- **↻ Neu laden** im Header (nur bei lazy Objekten) verwirft die Kinder und lädt sie frisch.
+- Geladene Kinder können selbst wieder lazy sein (beliebig tief).
+
+Nützliche Methoden an `ObjectNode`: `isLazy()`, `isLoaded()`, `loadedChildren()` (ohne zu laden), `ensureLoaded()`, `reload()`.
+
+Das Beispiel „Archiv“ in `Main.java` lädt Jahre → Monate → Dokumente nach und schreibt jeden Ladevorgang in die Konsole.
+
 ## Dateien
 
 | Datei | Inhalt |
 |---|---|
 | `ObjectNode.java` | Objekt: Name, Typ, Felder, Unterobjekte |
 | `ObjectType.java` | Enum der Objekttypen |
+| `ChildLoader.java` | Schnittstelle zum Nachladen von Unterobjekten |
+| `ChildLoadException.java` | Fehler beim Nachladen |
 | `HtmlRenderer.java` | Baut die HTML-Seite (Navigation, Header, Main, CSS) |
 | `TreeServer.java` | Webserver aus dem JDK |
 | `Main.java` | Startpunkt und Beispieldaten |

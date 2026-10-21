@@ -3,6 +3,12 @@ package de.objektbaum;
 import java.awt.Desktop;
 import java.net.URI;
 import java.time.LocalDate;
+import java.time.YearMonth;
+import java.time.format.TextStyle;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Random;
 
 /**
  * Startet den Viewer mit Beispieldaten.
@@ -74,6 +80,61 @@ public final class Main {
 
         firma.child("Notizen", ObjectType.SONSTIGES); // Objekt ohne Felder und Kinder
 
+        // Lazy Loading: die Kinder werden erst beim ersten Öffnen/Aufklappen geladen.
+        firma.child("Archiv", ObjectType.ORDNER)
+                .field("Hinweis", "Unterobjekte werden erst bei Bedarf geladen")
+                .lazy(Main::ladeJahre);
+
         return firma;
+    }
+
+    // ------------------------------------------------------------------
+    // Beispiel-Loader. In der Praxis z. B. Datenbankabfrage oder REST-Aufruf.
+    // ------------------------------------------------------------------
+
+    private static List<ObjectNode> ladeJahre(ObjectNode archiv) throws InterruptedException {
+        log(archiv);
+        List<ObjectNode> jahre = new ArrayList<>();
+        for (int jahr = 2026; jahr >= 2022; jahr--) {
+            int j = jahr;
+            jahre.add(new ObjectNode(String.valueOf(jahr), ObjectType.ORDNER)
+                    .field("Jahr", jahr)
+                    .lazy(parent -> ladeMonate(parent, j)));
+        }
+        return jahre;
+    }
+
+    private static List<ObjectNode> ladeMonate(ObjectNode jahrKnoten, int jahr) throws InterruptedException {
+        log(jahrKnoten);
+        List<ObjectNode> monate = new ArrayList<>();
+        int bisMonat = jahr == LocalDate.now().getYear() ? LocalDate.now().getMonthValue() : 12;
+        for (int m = 1; m <= bisMonat; m++) {
+            YearMonth ym = YearMonth.of(jahr, m);
+            monate.add(new ObjectNode(ym.getMonth().getDisplayName(TextStyle.FULL, Locale.GERMAN) + " " + jahr,
+                    ObjectType.ORDNER)
+                    .field("Monat", ym.toString())
+                    .lazy(parent -> ladeDokumente(parent, ym)));
+        }
+        return monate;
+    }
+
+    private static List<ObjectNode> ladeDokumente(ObjectNode monatKnoten, YearMonth ym) throws InterruptedException {
+        log(monatKnoten);
+        Random rnd = new Random(ym.hashCode()); // gleiche Daten bei jedem Laden
+        List<ObjectNode> docs = new ArrayList<>();
+        int anzahl = rnd.nextInt(5); // 0..4 Dokumente, manche Monate sind leer
+        for (int i = 1; i <= anzahl; i++) {
+            docs.add(new ObjectNode("Rechnung-" + ym + "-" + String.format("%03d", i) + ".pdf", ObjectType.DOKUMENT)
+                    .field("Betrag €", String.format(Locale.GERMANY, "%,.2f", 100 + rnd.nextDouble() * 4900))
+                    .field("Datum", ym.atDay(1 + rnd.nextInt(ym.lengthOfMonth())))
+                    .field("Bezahlt", rnd.nextBoolean()));
+        }
+        return docs;
+    }
+
+    /** Simuliert eine langsame Datenquelle und zeigt in der Konsole, wann geladen wird. */
+    private static void log(ObjectNode node) throws InterruptedException {
+        System.out.println("  lade Unterobjekte von: " + node.name());
+        Thread.sleep(300);
     }
 }

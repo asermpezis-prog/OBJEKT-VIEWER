@@ -9,6 +9,7 @@ public enum ObjectType {
     TEAM("Team", "👥"),
     MITARBEITER("Mitarbeiter", "👤"),
     PROJEKT("Projekt", "📁"),
+    ORDNER("Ordner", "📂"),
     DOKUMENT("Dokument", "📄"),
     SONSTIGES("Sonstiges", "•");
 

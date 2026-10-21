@@ -10,11 +10,13 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 
 /**
  * Kleiner Webserver aus dem JDK (keine Bibliotheken nötig), der die Seite ausliefert.
- * Aufruf: http://localhost:8080/?id=<objektId>&layout=v|h
+ * Aufruf: http://localhost:8080/?id=<objektId>&layout=v|h[&reload=1]
+ * Navigation nachladen: /nav?id=<objektId>&sel=<gewaehltesObjekt>&layout=v|h
  */
 public final class TreeServer {
 
@@ -39,22 +41,46 @@ public final class TreeServer {
     }
 
     private void handle(HttpExchange ex) throws IOException {
-        try (ex) {
-            if (!"/".equals(ex.getRequestURI().getPath())) {
-                send(ex, 404, "text/plain", "Nicht gefunden");
-                return;
-            }
+        try {
+            String path = ex.getRequestURI().getPath();
             Map<String, String> q = query(ex.getRequestURI().getRawQuery());
             HtmlRenderer.Layout layout = HtmlRenderer.Layout.fromCode(q.get("layout"));
-            ObjectNode selected = root;
-            try {
-                if (q.containsKey("id")) {
-                    selected = root.find(Integer.parseInt(q.get("id"))).orElse(root);
+
+            switch (path) {
+                case "/" -> {
+                    ObjectNode selected = lookup(q.get("id")).orElse(root);
+                    if ("1".equals(q.get("reload"))) {
+                        selected.reload();
+                    }
+                    send(ex, 200, "text/html; charset=utf-8", renderer.render(selected, layout));
                 }
-            } catch (NumberFormatException ignored) {
-                // ungültige id -> Wurzel anzeigen
+                case "/nav" -> {
+                    // HTML-Fragment: Kinder eines Knotens für die Navigation (lazy nachladen)
+                    Optional<ObjectNode> node = lookup(q.get("id"));
+                    if (node.isEmpty()) {
+                        send(ex, 404, "text/plain; charset=utf-8", "Objekt nicht gefunden");
+                        return;
+                    }
+                    ObjectNode selected = lookup(q.get("sel")).orElse(null);
+                    send(ex, 200, "text/html; charset=utf-8", renderer.renderNavChildren(node.get(), selected, layout));
+                }
+                default -> send(ex, 404, "text/plain; charset=utf-8", "Nicht gefunden");
             }
-            send(ex, 200, "text/html; charset=utf-8", renderer.render(selected, layout));
+        } catch (RuntimeException e) {
+            e.printStackTrace();
+            send(ex, 500, "text/plain; charset=utf-8", "Interner Fehler: " + e.getMessage());
+        } finally {
+            ex.close();
+        }
+    }
+
+    /** Sucht ein Objekt im bereits geladenen Baum. */
+    private Optional<ObjectNode> lookup(String id) {
+        if (id == null || id.isBlank()) return Optional.empty();
+        try {
+            return root.find(Integer.parseInt(id));
+        } catch (NumberFormatException e) {
+            return Optional.empty();
         }
     }
 
