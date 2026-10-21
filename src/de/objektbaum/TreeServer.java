@@ -130,41 +130,13 @@ public final class TreeServer {
         }
         ObjectNode node = found.get();
         NodeView view = renderer.views().resolve(node);
-        String message = "Gespeichert.";
-        boolean error = false;
-
-        if (view != null) {
-            // 1. Eingaben übernehmen (nur Elemente, die die Ansicht als editierbar definiert)
-            for (Element.Input in : view.editableInputs()) {
-                List<String> values = form.getOrDefault(in.key(), List.of());
-                if (in instanceof ComboList cl && cl.multiSelect()) {
-                    node.field(in.key(), List.copyOf(values));
-                } else {
-                    node.field(in.key(), values.isEmpty() ? "" : values.get(0));
-                }
-            }
-            // 2. Button-Aktion
-            String btn = first(form, "_btn");
-            if (btn != null && !btn.isEmpty()) {
-                Optional<Button> button = view.button(btn);
-                if (button.isPresent() && button.get().action() != null) {
-                    Map<String, List<String>> values = new LinkedHashMap<>(form);
-                    values.keySet().removeIf(k -> k.startsWith("_"));
-                    try {
-                        message = button.get().action().run(node, values);
-                    } catch (Exception e) {
-                        error = true;
-                        message = button.get().label() + " fehlgeschlagen: " + e.getMessage();
-                    }
-                }
-            }
-        }
+        HtmlRenderer.Message result = FormSubmit.submit(node, view, form, first(form, "_btn"));
 
         // Post/Redirect/Get: Seite neu laden, Meldung als Parameter
         StringBuilder loc = new StringBuilder("/?id=").append(node.id()).append("&layout=").append(layout.code());
-        if (message != null && !message.isBlank()) {
-            loc.append("&msg=").append(URLEncoder.encode(message, StandardCharsets.UTF_8));
-            if (error) loc.append("&err=1");
+        if (result != null) {
+            loc.append("&msg=").append(URLEncoder.encode(result.text(), StandardCharsets.UTF_8));
+            if (result.error()) loc.append("&err=1");
         }
         ex.getResponseHeaders().set("Location", loc.toString());
         ex.sendResponseHeaders(303, -1);

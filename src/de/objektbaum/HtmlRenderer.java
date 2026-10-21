@@ -544,7 +544,7 @@ public final class HtmlRenderer {
     // ----- Hilfen -----
 
     /** Text eines Feldwerts: Listen werden mit Komma verbunden. */
-    static String text(Object v) {
+    public static String text(Object v) {
         if (v instanceof Collection<?> c) {
             return c.stream().map(String::valueOf).collect(Collectors.joining(", "));
         }

@@ -1,6 +1,7 @@
 # Objekt-Viewer
 
-Zeigt ein Objekt und seine Unterobjekte als HTML-Seite an. Reines Java (17 oder neuer, getestet mit 21), keine Bibliotheken.
+Zeigt ein Objekt und seine Unterobjekte an – wahlweise **im Browser** oder als **Swing-Fenster**.
+Reines Java (17 oder neuer, getestet mit 21), keine Bibliotheken.
 
 - **Baum** links als Navigation, oder wahlweise als **Baumtabelle** mit Spalten, Filter und Sortierung
 - **Header** mit Pfad, Name, Typ und den Umschaltern
@@ -8,11 +9,42 @@ Zeigt ein Objekt und seine Unterobjekte als HTML-Seite an. Reines Java (17 oder 
 
 ## Starten
 
+**Browser-Version** (kleiner Webserver aus dem JDK, läuft auch auf Servern ohne Bildschirm):
+
 ```
 ./run.sh                  (Linux/macOS)  -> http://localhost:8080/
 ./run.sh 9090             anderer Port
 ./run.sh 8080 0.0.0.0     aus dem Netzwerk erreichbar, z. B. http://hawk:8080/
 run.bat                   (Windows, gleiche Parameter)
+```
+
+**Swing-Version** (eigenes Fenster, kein Webserver, braucht eine grafische Oberfläche):
+
+```
+./run-swing.sh            (Linux/macOS)
+run-swing.bat             (Windows)
+```
+
+Beide Versionen benutzen **dieselben Daten, Ansichten, Elemente und Baumtabellen-Spalten** aus `Main.java`.
+Was dort definiert ist, gilt für beide. Speichern und Button-Aktionen laufen in beiden über `FormSubmit`
+und verhalten sich daher gleich.
+
+| | Browser | Swing |
+|---|---|---|
+| Baum / Baumtabelle, Filter, Sortierung, Alle auf/zu | ✔ | ✔ |
+| Frames verschieben, Größen merken, Doppelklick = zurücksetzen | ✔ (im Browser gespeichert) | ✔ (Java Preferences) |
+| Textfeld, ComboBox, ComboListe, Buttons mit Java-Aktion | ✔ | ✔ |
+| Lazy Loading, Neu laden | ✔ | ✔ (im Hintergrund, Fenster bleibt bedienbar) |
+| Zugriff von anderen Rechnern / ohne Bildschirm | ✔ | – |
+| Dunkles Farbschema nach Systemeinstellung | ✔ | – |
+
+Die Swing-Version zeigt die Typ-Symbole (Emoji), wenn eine passende Schrift vorhanden ist,
+sonst einen farbigen Kreis mit Anfangsbuchstaben.
+
+Eigenes Fenster aus dem eigenen Code:
+
+```java
+SwingUtilities.invokeLater(() -> new SwingViewer(root, "Objekt-Viewer", views, spalten).open());
 ```
 
 ## Eigene Objekte
@@ -134,6 +166,12 @@ jeder Ladevorgang erscheint in der Konsole.
 | `ViewRegistry.java` | Ansicht pro Objekttyp |
 | `TreeColumn.java` | Spalten der Baumtabelle |
 | `ChildLoader.java`, `ChildLoadException.java` | Nachladen von Unterobjekten |
-| `HtmlRenderer.java` | Baut die HTML-Seite (Navigation, Baumtabelle, Header, Frames, CSS, JS) |
-| `TreeServer.java` | Webserver aus dem JDK (Seiten, Nachladen, Formular-Aktionen) |
-| `Main.java` | Startpunkt, Ansichten und Beispieldaten |
+| `FormSubmit.java` | Speichern der Eingaben und Button-Aktionen (für beide Versionen) |
+| `HtmlRenderer.java` | Browser: baut die HTML-Seite (Navigation, Baumtabelle, Header, Frames, CSS, JS) |
+| `TreeServer.java` | Browser: Webserver aus dem JDK (Seiten, Nachladen, Formular-Aktionen) |
+| `Main.java` | Browser: Startpunkt; außerdem Ansichten und Beispieldaten für beide Versionen |
+| `MainSwing.java` | Swing: Startpunkt |
+| `swing/SwingViewer.java` | Swing: Fenster, Header, Inhalt, Unterobjekte |
+| `swing/NavTree.java`, `swing/TreeTablePanel.java` | Swing: Navigation und Baumtabelle |
+| `swing/FramesPanel.java`, `swing/Splits.java` | Swing: Frames mit Segmenten, verschiebbare Bereiche |
+| `swing/Ui.java` | Swing: Farben, Schriften, Tabellen, Buttons |
