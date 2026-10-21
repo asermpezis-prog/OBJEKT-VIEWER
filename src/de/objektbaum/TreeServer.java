@@ -25,8 +25,12 @@ public final class TreeServer {
     private HttpServer server;
 
     public TreeServer(ObjectNode root, String title) {
+        this(root, title, new ViewRegistry());
+    }
+
+    public TreeServer(ObjectNode root, String title, ViewRegistry views) {
         this.root = root;
-        this.renderer = new HtmlRenderer(root, title);
+        this.renderer = new HtmlRenderer(root, title, views);
     }
 
     public void start(int port) throws IOException {

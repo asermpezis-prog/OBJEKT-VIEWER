@@ -34,6 +34,38 @@ ObjectNode abteilung = firma.child("Entwicklung", ObjectType.ABTEILUNG)
 
 Die Typen stehen in `ObjectType.java` und können frei angepasst werden (Name, Anzeigetext, Icon).
 
+## Ansichten: Spalten und Segmente (Frames)
+
+Pro Objekttyp lässt sich festlegen, wie der Main-Bereich aufgeteilt ist: 1 bis 3 Spalten, jede mit beliebig
+vielen Segmenten untereinander. Jedes Segment zeigt eine Auswahl von Feldern. Alle Trennlinien lassen sich
+mit der Maus verschieben (oder per Tab + Pfeiltasten); die Größen merkt sich der Browser pro Ansicht,
+Doppelklick auf eine Trennlinie setzt sie zurück.
+
+```java
+ViewRegistry views = new ViewRegistry()
+        .register(ObjectType.MITARBEITER, NodeView.of("Mitarbeiter",
+                Column.of(
+                        Segment.fields("Stammdaten", "Rolle", "Seit").vertical(),
+                        Segment.fields("Kontakt", "E-Mail", "Telefon").horizontal().height(2)),
+                Column.of(
+                        Segment.remainingFields("Weitere Felder")).width(0.8)));
+
+new TreeServer(root, "Objekt-Viewer", views).start(8080);
+```
+
+| Baustein | Bedeutung |
+|---|---|
+| `Segment.fields(titel, keys…)` | genau diese Felder, in dieser Reihenfolge (fehlende werden als – gezeigt) |
+| `Segment.allFields(titel)` | alle Felder des Objekts |
+| `Segment.remainingFields(titel)` | alle Felder, die kein anderes Segment der Ansicht nennt |
+| `.vertical()` / `.horizontal()` | feste Darstellung Key/Value bzw. Keys als Spalten; ohne Angabe gilt der Umschalter im Header |
+| `.height(n)` / `Column.width(n)` | relative Startgröße |
+| `NodeView.withoutChildren()` | Unterobjekte unter den Frames ausblenden |
+
+Einzelne Knoten können die Ansicht ihres Typs überschreiben: `knoten.view(NodeView.of(...))`.
+Typen ohne Ansicht werden wie bisher dargestellt (alle Felder, darunter die Unterobjekte).
+Mehr als 3 Spalten oder eine leere Spalte ergeben beim Start eine `IllegalArgumentException`.
+
 ## Lazy Loading
 
 Unterobjekte können erst bei Bedarf geladen werden, z. B. aus einer Datenbank:
@@ -60,6 +92,8 @@ Das Beispiel „Archiv“ in `Main.java` lädt Jahre → Monate → Dokumente na
 |---|---|
 | `ObjectNode.java` | Objekt: Name, Typ, Felder, Unterobjekte |
 | `ObjectType.java` | Enum der Objekttypen |
+| `NodeView.java`, `Column.java`, `Segment.java` | Ansicht: Spalten und Segmente |
+| `ViewRegistry.java` | Ansicht pro Objekttyp |
 | `ChildLoader.java` | Schnittstelle zum Nachladen von Unterobjekten |
 | `ChildLoadException.java` | Fehler beim Nachladen |
 | `HtmlRenderer.java` | Baut die HTML-Seite (Navigation, Header, Main, CSS) |

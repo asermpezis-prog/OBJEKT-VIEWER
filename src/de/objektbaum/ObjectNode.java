@@ -25,6 +25,7 @@ public final class ObjectNode {
     private final List<ObjectNode> children = new ArrayList<>();
     private volatile ObjectNode parent;
 
+    private volatile NodeView view;
     private ChildLoader loader;
     private volatile boolean loaded = true;
 
@@ -44,6 +45,22 @@ public final class ObjectNode {
 
     public synchronized Map<String, Object> fields() {
         return Collections.unmodifiableMap(new LinkedHashMap<>(fields));
+    }
+
+    // ----------------------------------------------------------------- Ansicht
+
+    /**
+     * Eigene Ansicht nur für diesen Knoten. Überschreibt die Ansicht seines Typs
+     * aus der {@link ViewRegistry}. null = Ansicht des Typs verwenden.
+     */
+    public ObjectNode view(NodeView view) {
+        this.view = view;
+        return this;
+    }
+
+    /** Die eigene Ansicht dieses Knotens oder null. */
+    public NodeView view() {
+        return view;
     }
 
     // ------------------------------------------------------------ Unterobjekte

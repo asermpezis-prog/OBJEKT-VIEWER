@@ -20,8 +20,9 @@ public final class Main {
         int port = args.length > 0 ? Integer.parseInt(args[0]) : 8080;
 
         ObjectNode root = beispielDaten();
+        ViewRegistry views = ansichten();
 
-        TreeServer server = new TreeServer(root, "Objekt-Viewer");
+        TreeServer server = new TreeServer(root, "Objekt-Viewer", views);
         server.start(port);
 
         String url = "http://localhost:" + port + "/";
@@ -36,6 +37,41 @@ public final class Main {
         }
     }
 
+    /**
+     * Ansichten pro Objekttyp: 1 bis 3 Spalten, jede mit beliebig vielen Segmenten.
+     * Typen ohne Ansicht werden in der Standarddarstellung gezeigt.
+     */
+    static ViewRegistry ansichten() {
+        return new ViewRegistry()
+                // 3 Spalten
+                .register(ObjectType.MITARBEITER, NodeView.of("Mitarbeiter",
+                        Column.of(
+                                Segment.fields("Stammdaten", "Rolle", "Abteilung", "Seit").vertical(),
+                                Segment.fields("Arbeitsplatz", "Raum", "Homeoffice").vertical()),
+                        Column.of(
+                                Segment.fields("Kontakt", "E-Mail", "Telefon", "Mobil").vertical().height(2),
+                                Segment.fields("Kennung", "Kürzel", "Personalnr.").horizontal()),
+                        Column.of(
+                                Segment.remainingFields("Weitere Felder")).width(0.8)
+                ).withoutChildren())
+
+                // 2 Spalten, links breiter
+                .register(ObjectType.ABTEILUNG, NodeView.of("Abteilung",
+                        Column.of(
+                                Segment.fields("Organisation", "Leitung", "Kostenstelle", "Standort").vertical(),
+                                Segment.fields("Kennzahlen", "Budget €", "Mitarbeiter", "Offene Stellen").horizontal())
+                                .width(2),
+                        Column.of(
+                                Segment.remainingFields("Sonstiges"))))
+
+                // 1 Spalte, 2 Segmente
+                .register(ObjectType.DOKUMENT, NodeView.of("Dokument",
+                        Column.of(
+                                Segment.fields("Rechnung", "Betrag €", "Datum", "Bezahlt").horizontal(),
+                                Segment.allFields("Alle Felder").vertical().height(2))
+                ).withoutChildren());
+    }
+
     /** Beispielbaum. Hier eigene Objekte aufbauen. */
     static ObjectNode beispielDaten() {
         ObjectNode firma = new ObjectNode("Muster GmbH", ObjectType.FIRMA)
@@ -47,21 +83,33 @@ public final class Main {
         ObjectNode entwicklung = firma.child("Entwicklung", ObjectType.ABTEILUNG)
                 .field("Leitung", "Anna Berger")
                 .field("Kostenstelle", "KST-100")
-                .field("Standort", "München");
+                .field("Standort", "München")
+                .field("Budget €", "1.200.000")
+                .field("Mitarbeiter", 18)
+                .field("Offene Stellen", 3)
+                .field("Gegründet", 2006);
 
         ObjectNode backend = entwicklung.child("Team Backend", ObjectType.TEAM)
                 .field("Sprache", "Java 21")
                 .field("Sprint-Länge", "2 Wochen");
         backend.child("Max Huber", ObjectType.MITARBEITER)
-                .field("Rolle", "Senior Developer").field("Seit", 2017).field("E-Mail", "max.huber@example.com");
+                .field("Rolle", "Senior Developer").field("Abteilung", "Entwicklung").field("Seit", 2017)
+                .field("E-Mail", "max.huber@example.com").field("Telefon", "+49 89 1234-101")
+                .field("Mobil", "+49 170 0000101").field("Raum", "2.14").field("Homeoffice", false)
+                .field("Kürzel", "MHU").field("Personalnr.", 1017).field("Geburtstag", "12.03.")
+                .field("Skills", "Java, SQL, Kafka");
         backend.child("Lena Wolf", ObjectType.MITARBEITER)
-                .field("Rolle", "Developer").field("Seit", 2022).field("E-Mail", "lena.wolf@example.com")
-                .field("Homeoffice", true);
+                .field("Rolle", "Developer").field("Abteilung", "Entwicklung").field("Seit", 2022)
+                .field("E-Mail", "lena.wolf@example.com").field("Telefon", "+49 89 1234-102")
+                .field("Raum", "2.15").field("Homeoffice", true).field("Kürzel", "LWO").field("Personalnr.", 1102);
 
         ObjectNode frontend = entwicklung.child("Team Frontend", ObjectType.TEAM)
                 .field("Sprache", "TypeScript");
         frontend.child("Jonas Keller", ObjectType.MITARBEITER)
-                .field("Rolle", "UX Engineer").field("Seit", 2020);
+                .field("Rolle", "UX Engineer").field("Seit", 2020)
+                // Einzelner Knoten mit eigener Ansicht (überschreibt die Ansicht des Typs)
+                .view(NodeView.of("Kompakt",
+                        Column.of(Segment.allFields("Alles auf einen Blick").horizontal())));
 
         ObjectNode projekt = entwicklung.child("Projekt Phoenix", ObjectType.PROJEKT)
                 .field("Status", "In Arbeit")

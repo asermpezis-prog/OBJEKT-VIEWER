@@ -1,5 +1,6 @@
 package de.objektbaum;
 
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -30,12 +31,21 @@ public final class HtmlRenderer {
         }
     }
 
+    /** Platzhalter für ein Feld, das eine Ansicht nennt, das Objekt aber nicht hat. */
+    private static final Object MISSING = new Object();
+
     private final ObjectNode root;
     private final String title;
+    private final ViewRegistry views;
 
     public HtmlRenderer(ObjectNode root, String title) {
+        this(root, title, new ViewRegistry());
+    }
+
+    public HtmlRenderer(ObjectNode root, String title, ViewRegistry views) {
         this.root = root;
         this.title = title;
+        this.views = views == null ? new ViewRegistry() : views;
     }
 
     public String render(ObjectNode selected, Layout layout) {
@@ -86,20 +96,40 @@ public final class HtmlRenderer {
         sb.append("</div>\n</div>\n</div>\n<div class=\"meta\">")
           .append(selected.fields().size()).append(" Felder · ")
           .append(selected.isLoaded() ? kids.size() + " Unterobjekte" : "Unterobjekte nicht geladen")
-          .append(selected.isLazy() ? " · <span class=\"lazy-tag\">lazy</span>" : "")
-          .append("</div>\n</header>\n");
+          .append(selected.isLazy() ? " · <span class=\"lazy-tag\">lazy</span>" : "");
+        NodeView view = views.resolve(selected);
+        if (view != null) {
+            sb.append(" · Ansicht: ").append(esc(view.name()));
+        }
+        sb.append("</div>\n</header>\n");
 
         // ---------- Main ----------
-        sb.append("<main class=\"main\">\n<section>\n<h2>Felder</h2>\n");
-        if (selected.fields().isEmpty()) {
-            sb.append("<p class=\"empty\">Dieses Objekt hat keine Felder.</p>\n");
-        } else if (layout == Layout.VERTICAL) {
-            renderVertical(sb, selected.fields());
+        sb.append("<main class=\"main\">\n");
+        if (view != null) {
+            renderFrames(sb, selected, view, layout);
+            if (view.showChildren()) {
+                renderChildrenSection(sb, selected, kids, loadError, layout);
+            }
         } else {
-            renderHorizontal(sb, List.of(selected), false, layout);
+            sb.append("<section>\n<h2>Felder</h2>\n");
+            if (selected.fields().isEmpty()) {
+                sb.append("<p class=\"empty\">Dieses Objekt hat keine Felder.</p>\n");
+            } else if (layout == Layout.VERTICAL) {
+                renderVertical(sb, selected.fields());
+            } else {
+                renderHorizontal(sb, List.of(selected), false, layout);
+            }
+            sb.append("</section>\n");
+            renderChildrenSection(sb, selected, kids, loadError, layout);
         }
-        sb.append("</section>\n");
+        sb.append("</main>\n</div>\n<script>").append(JS).append("</script>\n</body>\n</html>\n");
+        return sb.toString();
+    }
 
+    // ----- Unterobjekte -----
+
+    private void renderChildrenSection(StringBuilder sb, ObjectNode selected, List<ObjectNode> kids,
+                                       String loadError, Layout layout) {
         sb.append("<section>\n<h2>Unterobjekte</h2>\n");
         if (loadError != null) {
             sb.append("<p class=\"error\">").append(esc(loadError)).append(" <a href=\"")
@@ -120,8 +150,66 @@ public final class HtmlRenderer {
                 sb.append("</div>\n");
             }
         }
-        sb.append("</section>\n</main>\n</div>\n<script>").append(JS).append("</script>\n</body>\n</html>\n");
-        return sb.toString();
+        sb.append("</section>\n");
+    }
+
+    // ----- Frames (Ansicht mit Spalten und Segmenten) -----
+
+    private void renderFrames(StringBuilder sb, ObjectNode node, NodeView view, Layout pageLayout) {
+        Map<String, Object> fields = node.fields();
+        sb.append("<div class=\"frames\" data-view=\"").append(esc(view.name())).append("\">\n");
+        List<Column> cols = view.columns();
+        for (int ci = 0; ci < cols.size(); ci++) {
+            Column col = cols.get(ci);
+            if (ci > 0) {
+                sb.append("<div class=\"split-v\" role=\"separator\" aria-orientation=\"vertical\" tabindex=\"0\" ")
+                  .append("title=\"Ziehen zum Ändern der Breite, Doppelklick setzt zurück\"></div>\n");
+            }
+            sb.append("<div class=\"fcol\" style=\"flex-grow:").append(num(col.width()))
+              .append("\" data-grow=\"").append(num(col.width())).append("\">\n");
+            List<Segment> segs = col.segments();
+            for (int si = 0; si < segs.size(); si++) {
+                Segment seg = segs.get(si);
+                if (si > 0) {
+                    sb.append("<div class=\"split-h\" role=\"separator\" aria-orientation=\"horizontal\" tabindex=\"0\" ")
+                      .append("title=\"Ziehen zum Ändern der Höhe, Doppelklick setzt zurück\"></div>\n");
+                }
+                sb.append("<section class=\"fseg\" style=\"flex-grow:").append(num(seg.height()))
+                  .append("\" data-grow=\"").append(num(seg.height())).append("\">\n")
+                  .append("<div class=\"fseg-head\">").append(esc(seg.title())).append("</div>\n<div class=\"fseg-body\">\n");
+                Map<String, Object> shown = new LinkedHashMap<>();
+                for (String k : view.keysFor(seg, fields)) {
+                    shown.put(k, fields.containsKey(k) ? fields.get(k) : MISSING);
+                }
+                if (shown.isEmpty()) {
+                    sb.append("<p class=\"empty\">Keine Felder.</p>\n");
+                } else if ((seg.layout() != null ? seg.layout() : pageLayout) == Layout.VERTICAL) {
+                    renderVertical(sb, shown);
+                } else {
+                    renderSingleRow(sb, shown);
+                }
+                sb.append("</div>\n</section>\n");
+            }
+            sb.append("</div>\n");
+        }
+        sb.append("</div>\n");
+    }
+
+    /** Keys als Spalten, eine Zeile mit den Values. */
+    private void renderSingleRow(StringBuilder sb, Map<String, Object> fields) {
+        sb.append("<div class=\"scroll\"><table class=\"grid\">\n<thead><tr>");
+        for (String k : fields.keySet()) sb.append("<th>").append(esc(k)).append("</th>");
+        sb.append("</tr></thead>\n<tbody>\n<tr>");
+        for (Object v : fields.values()) sb.append("<td>").append(value(v)).append("</td>");
+        sb.append("</tr>\n</tbody>\n</table></div>\n");
+    }
+
+    private static String value(Object v) {
+        return v == MISSING ? "<span class=\"na\">–</span>" : esc(String.valueOf(v));
+    }
+
+    private static String num(double d) {
+        return d == Math.rint(d) ? String.valueOf((long) d) : String.valueOf(d);
     }
 
     /**
@@ -187,7 +275,7 @@ public final class HtmlRenderer {
         sb.append("<div class=\"scroll\"><table class=\"kv\">\n<thead><tr><th>Key</th><th>Value</th></tr></thead>\n<tbody>\n");
         for (Map.Entry<String, Object> e : fields.entrySet()) {
             sb.append("<tr><th scope=\"row\">").append(esc(e.getKey())).append("</th><td>")
-              .append(esc(String.valueOf(e.getValue()))).append("</td></tr>\n");
+              .append(value(e.getValue())).append("</td></tr>\n");
         }
         sb.append("</tbody>\n</table></div>\n");
     }
@@ -269,6 +357,93 @@ public final class HtmlRenderer {
             delete d.dataset.loaded;
           }
         }, true);
+
+        // ---------- Frames: verschiebbare Trennlinien ----------
+        (function () {
+          const frames = document.querySelector('.frames');
+          if (!frames) return;
+          const key = 'objektviewer.frames.' + frames.dataset.view;
+          const items = [...frames.querySelectorAll('.fcol, .fseg')];
+          const wide = window.matchMedia('(min-width: 761px)');
+
+          const fit = () => {
+            if (!wide.matches) { frames.style.height = ''; return; }
+            const top = frames.getBoundingClientRect().top + window.scrollY;
+            frames.style.height = Math.max(320, window.innerHeight - top - 24) + 'px';
+          };
+          fit();
+          window.addEventListener('resize', fit);
+
+          try {
+            const saved = JSON.parse(localStorage.getItem(key) || 'null');
+            if (Array.isArray(saved) && saved.length === items.length) {
+              items.forEach((el, i) => { if (saved[i] > 0) el.style.flexGrow = saved[i]; });
+            }
+          } catch (e) { /* kein Speicher verfuegbar */ }
+
+          const save = () => {
+            try { localStorage.setItem(key, JSON.stringify(items.map(el => parseFloat(el.style.flexGrow) || 1))); }
+            catch (e) { /* ignorieren */ }
+          };
+
+          // Verschiebt die Grenze zwischen a und b um delta Pixel.
+          const resize = (sp, startA, startB, gA, gB, delta) => {
+            const total = startA + startB, gt = gA + gB, min = Math.min(80, total / 2);
+            const na = Math.max(min, Math.min(total - min, startA + delta));
+            sp.previousElementSibling.style.flexGrow = (gt * na / total).toFixed(4);
+            sp.nextElementSibling.style.flexGrow = (gt * (total - na) / total).toFixed(4);
+          };
+          const measure = (sp) => {
+            const vert = sp.classList.contains('split-v');
+            const a = sp.previousElementSibling, b = sp.nextElementSibling;
+            const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+            return {
+              vert,
+              sa: vert ? ra.width : ra.height, sb: vert ? rb.width : rb.height,
+              ga: parseFloat(getComputedStyle(a).flexGrow) || 1, gb: parseFloat(getComputedStyle(b).flexGrow) || 1
+            };
+          };
+
+          frames.addEventListener('pointerdown', (ev) => {
+            const sp = ev.target.closest('.split-v, .split-h');
+            if (!sp || ev.button !== 0) return;
+            ev.preventDefault();
+            const m = measure(sp);
+            const start = m.vert ? ev.clientX : ev.clientY;
+            sp.setPointerCapture(ev.pointerId);
+            sp.classList.add('drag');
+            document.body.classList.add(m.vert ? 'drag-v' : 'drag-h');
+            const move = (e) => resize(sp, m.sa, m.sb, m.ga, m.gb, (m.vert ? e.clientX : e.clientY) - start);
+            const up = () => {
+              sp.removeEventListener('pointermove', move);
+              sp.classList.remove('drag');
+              document.body.classList.remove('drag-v', 'drag-h');
+              save();
+            };
+            sp.addEventListener('pointermove', move);
+            sp.addEventListener('pointerup', up, { once: true });
+            sp.addEventListener('pointercancel', up, { once: true });
+          });
+
+          // Tastatur: Pfeiltasten verschieben in 20-px-Schritten
+          frames.addEventListener('keydown', (ev) => {
+            const sp = ev.target.closest('.split-v, .split-h');
+            if (!sp) return;
+            const m = measure(sp);
+            const dir = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[ev.key];
+            if (!dir || (m.vert !== (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight'))) return;
+            ev.preventDefault();
+            resize(sp, m.sa, m.sb, m.ga, m.gb, dir * 20);
+            save();
+          });
+
+          // Doppelklick auf eine Trennlinie: alle Groessen dieser Ansicht zuruecksetzen
+          frames.addEventListener('dblclick', (ev) => {
+            if (!ev.target.closest('.split-v, .split-h')) return;
+            items.forEach(el => { el.style.flexGrow = el.dataset.grow; });
+            try { localStorage.removeItem(key); } catch (e) { /* ignorieren */ }
+          });
+        })();
         """;
 
     private static final String CSS = """
@@ -279,7 +454,7 @@ public final class HtmlRenderer {
         *{box-sizing:border-box}
         body{margin:0;font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--fg)}
         a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
-        .page{display:grid;grid-template-columns:280px 1fr;grid-template-rows:auto 1fr;min-height:100vh;
+        .page{background:linear-gradient(90deg,var(--nav) 0 280px,var(--bg) 280px);display:grid;grid-template-columns:280px 1fr;grid-template-rows:auto 1fr;min-height:100vh;
               grid-template-areas:"nav header" "nav main"}
         .nav{grid-area:nav;background:var(--nav);color:var(--nav-fg);padding:16px 12px;overflow:auto;
              position:sticky;top:0;height:100vh}
@@ -308,7 +483,7 @@ public final class HtmlRenderer {
         table{border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:8px;min-width:320px}
         th,td{padding:7px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap}
         thead th{background:var(--zebra);font-size:13px;color:var(--muted)}
-        tbody tr:nth-child(even) td{background:var(--zebra)}
+        tbody tr:nth-child(even)>*{background:var(--zebra)}
         table.kv tbody th{font-weight:600;width:1%}
         .empty{color:var(--muted);font-style:italic}
         .error{color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px}
@@ -319,10 +494,30 @@ public final class HtmlRenderer {
         .tree .note{color:var(--muted);font-size:13px;font-style:italic;padding:2px 8px 2px 22px}
         .tree .note.err{color:#f87171}
         .tree details.lazy>summary::before{color:var(--nav-fg)}
+        .na{color:var(--muted)}
+        .frames{display:flex;height:70vh;min-height:320px;margin-bottom:28px;border:1px solid var(--line);
+                border-radius:10px;overflow:hidden;background:var(--panel)}
+        .fcol{display:flex;flex-direction:column;flex:1 1 0;min-width:0;min-height:0}
+        .fseg{display:flex;flex-direction:column;flex:1 1 0;min-height:0;margin:0}
+        .fseg-head{flex:none;padding:7px 14px;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+                   color:var(--muted);background:var(--zebra);border-bottom:1px solid var(--line)}
+        .fseg-body{flex:1;overflow:auto;padding:12px 14px}
+        .fseg-body table{min-width:0;width:100%}
+        .fseg-body td{white-space:normal;overflow-wrap:anywhere}
+        .split-v,.split-h{flex:none;background:var(--line);position:relative;z-index:1;touch-action:none}
+        .split-v{width:5px;cursor:col-resize} .split-h{height:5px;cursor:row-resize}
+        .split-v::after,.split-h::after{content:"";position:absolute;inset:-4px}
+        .split-v:hover,.split-h:hover,.split-v.drag,.split-h.drag,.split-v:focus-visible,.split-h:focus-visible{background:var(--accent);outline:none}
+        body.drag-v,body.drag-v *{cursor:col-resize!important;user-select:none}
+        body.drag-h,body.drag-h *{cursor:row-resize!important;user-select:none}
         .ico{display:inline-block;width:20px;text-align:center;margin-right:2px}
         .badge{display:inline-block;font-size:12px;font-weight:500;padding:2px 9px;border-radius:999px;
                border:1px solid var(--line);background:var(--zebra);color:var(--fg);vertical-align:middle;white-space:nowrap}
         @media (max-width:760px){.page{grid-template-columns:1fr;grid-template-areas:"nav" "header" "main"}
-             .nav{position:static;height:auto;max-height:45vh} .header,.main{padding:16px}}
+             .nav{position:static;height:auto;max-height:45vh} .header,.main{padding:16px}
+             .page{background:var(--bg)}
+             .frames{flex-direction:column;height:auto!important;min-height:0}
+             .fcol,.fseg{flex:none!important} .split-v{display:none} .split-h{display:none}
+             .fcol+.split-v+.fcol{border-top:1px solid var(--line)} .fseg+.split-h+.fseg{border-top:1px solid var(--line)}}
         """;
 }
