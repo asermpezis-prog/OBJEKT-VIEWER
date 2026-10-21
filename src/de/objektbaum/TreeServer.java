@@ -32,7 +32,7 @@ public final class TreeServer {
     public void start(int port) throws IOException {
         server = HttpServer.create(new InetSocketAddress("localhost", port), 0);
         server.createContext("/", this::handle);
-        server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+        server.setExecutor(Executors.newCachedThreadPool());
         server.start();
     }
 

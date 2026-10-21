@@ -1,6 +1,6 @@
 # Objekt-Viewer
 
-Zeigt ein Objekt und seine Unterobjekte als HTML-Seite an. Reines Java 21, keine Bibliotheken.
+Zeigt ein Objekt und seine Unterobjekte als HTML-Seite an. Reines Java (17 oder neuer, getestet mit 21), keine Bibliotheken.
 
 - **Links:** Navigation als Baum (aufklappbar)
 - **Rechts oben:** Header mit Pfad, Name, Typ und Umschalter für das Tabellen-Layout
