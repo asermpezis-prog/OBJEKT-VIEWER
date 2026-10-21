@@ -32,7 +32,7 @@ public final class ObjectNode {
     public ObjectNode(String name, ObjectType type) {
         this.id = ID_COUNTER.incrementAndGet();
         this.name = name;
-        this.type = type == null ? ObjectType.SONSTIGES : type;
+        this.type = type == null ? ObjectType.UNBEKANNT : type;
     }
 
     // ------------------------------------------------------------------ Felder
