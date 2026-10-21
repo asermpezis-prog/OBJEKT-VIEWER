@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<!--
+  Objekt-Viewer – Seitengerüst der Browser-Version.
+
+  Diese Datei kann angepasst werden (Kopie im Konfigurationsordner unter templates/page.html).
+  Änderungen wirken nach dem Speichern sofort beim nächsten Neuladen der Seite.
+
+  Platzhalter (werden von Java eingesetzt, Inhalte sind bereits sicher maskiert):
+    {{pageTitle}}    Titel des Browser-Tabs: "<Objekt> – <Anwendung>"
+    {{appTitle}}     Name der Anwendung (aus viewer.xml title="…" oder aus dem Code)
+    {{objectName}}   Name des angezeigten Objekts
+    {{objectType}}   Typ des angezeigten Objekts (Anzeigetext)
+    {{nav}}          Baum der Navigation
+    {{header}}       Pfad, Titel, Umschalter, Meldung
+    {{treetable}}    Baumtabelle (nur sichtbar im Modus "Baumtabelle")
+    {{content}}      Frames bzw. Felder und Unterobjekte
+    {{configError}}  Fehlermeldung zu viewer.xml (leer, wenn alles in Ordnung ist)
+
+  Eigene Dateien (z. B. ein Logo) in den templates-Ordner legen und mit /static/<name> einbinden.
+-->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{pageTitle}}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>
+  // Baum oder Baumtabelle vor dem ersten Zeichnen setzen (kein Flackern)
+  try { if (localStorage.getItem('objektviewer.mode') === 'table') document.documentElement.classList.add('mode-table'); } catch (e) {}
+</script>
+</head>
+<body>
+{{configError}}
+<div class="page">
+
+  <nav class="nav">
+    <div class="brand">{{appTitle}}</div>
+    {{nav}}
+  </nav>
+
+  <header class="header">
+    {{header}}
+  </header>
+
+  <main class="main">
+    {{treetable}}
+    {{content}}
+  </main>
+
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -4,6 +4,7 @@ import de.objektbaum.FormSubmit;
 import de.objektbaum.HtmlRenderer;
 import de.objektbaum.HtmlRenderer.Layout;
 import de.objektbaum.NodeView;
+import de.objektbaum.ObjectViewer;
 import de.objektbaum.ObjectNode;
 import de.objektbaum.TreeColumn;
 import de.objektbaum.ViewRegistry;
@@ -36,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.function.Supplier;
 
 /**
  * Swing-Version des Objekt-Viewers: gleicher Aufbau und gleiche Ansichten wie die Browser-Version
@@ -48,7 +50,10 @@ import java.util.concurrent.ExecutionException;
  */
 public final class SwingViewer {
 
-    private final String title;
+    private final Supplier<String> title;
+    private final Supplier<String> configError;
+    private final Supplier<Object> configStamp;
+    private Object lastStamp;
     private final ViewRegistry views;
 
     private final NavTree nav;
@@ -67,8 +72,24 @@ public final class SwingViewer {
     private final Set<ObjectNode> loading = Collections.newSetFromMap(new IdentityHashMap<>());
 
     public SwingViewer(ObjectNode root, String title, ViewRegistry views, List<TreeColumn> treeColumns) {
+        this(root, () -> title, views, treeColumns, () -> null, () -> null);
+    }
+
+    /**
+     * Swing-Fenster zu einem {@link ObjectViewer}: gleiche Daten, Ansichten (inkl. viewer.xml) und Aktionen
+     * wie die Browser-Version. Änderungen an viewer.xml werden automatisch übernommen.
+     */
+    public SwingViewer(ObjectViewer viewer) {
+        this(viewer.root(), viewer::title, viewer.views(), viewer.treeColumns(), viewer::configError, viewer::configStamp);
+    }
+
+    private SwingViewer(ObjectNode root, Supplier<String> title, ViewRegistry views, List<TreeColumn> treeColumns,
+                        Supplier<String> configError, Supplier<Object> configStamp) {
         Ui.install();
         this.title = title;
+        this.configError = configError;
+        this.configStamp = configStamp;
+        this.lastStamp = configStamp.get();
         this.views = views == null ? new ViewRegistry() : views;
         List<TreeColumn> cols = treeColumns == null || treeColumns.isEmpty()
                 ? HtmlRenderer.DEFAULT_TREE_COLUMNS : treeColumns;
@@ -76,7 +97,7 @@ public final class SwingViewer {
         this.tableMode = "table".equals(Splits.PREFS.get("mode", "nav"));
 
         nav = new NavTree(root, this::show);
-        navComponent = nav.component(title);
+        navComponent = nav.component(title.get());
         treeTable = new TreeTablePanel(root, cols, this::show, n -> nav.refresh(n));
 
         header.setLayout(new BoxLayout(header, BoxLayout.Y_AXIS));
@@ -90,7 +111,7 @@ public final class SwingViewer {
 
     /** Öffnet das Fenster. Muss im Event-Thread aufgerufen werden ({@link SwingUtilities#invokeLater}). */
     public void open() {
-        frame = new JFrame(title);
+        frame = new JFrame(title.get());
         frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         frame.setContentPane(rootPanel);
         Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
@@ -99,6 +120,14 @@ public final class SwingViewer {
         frame.setLocationRelativeTo(null);
         updateTitle();
         frame.setVisible(true);
+        // viewer.xml beobachten: geändert -> aktuelle Ansicht neu aufbauen
+        new javax.swing.Timer(1000, e -> {
+            Object stamp = configStamp.get();
+            if (!java.util.Objects.equals(stamp, lastStamp)) {
+                lastStamp = stamp;
+                if (current != null) show(current, message);
+            }
+        }).start();
     }
 
     /** Der gesamte Inhalt, z. B. um ihn in ein eigenes Fenster einzubetten. */
@@ -151,7 +180,7 @@ public final class SwingViewer {
     }
 
     private void updateTitle() {
-        if (frame != null && current != null) frame.setTitle(current.name() + " – " + title);
+        if (frame != null && current != null) frame.setTitle(current.name() + " – " + title.get());
     }
 
     // ================================================================= Header
@@ -159,6 +188,19 @@ public final class SwingViewer {
     private void renderHeader() {
         ObjectNode node = current;
         header.removeAll();
+
+        String cfgError = configError.get();
+        if (cfgError != null) {
+            Ui.FilledLabel err = new Ui.FilledLabel("<html>" + cfgError.replace("&", "&amp;").replace("<", "&lt;") + "</html>");
+            err.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 13));
+            err.setForeground(Ui.ERR_FG);
+            err.colors(Ui.ERR_BG, Ui.ERR_LINE);
+            err.setBorder(Ui.pad(8, 12, 8, 12));
+            err.setAlignmentX(Component.LEFT_ALIGNMENT);
+            err.setMaximumSize(new Dimension(Integer.MAX_VALUE, err.getPreferredSize().height));
+            header.add(err);
+            header.add(Box.createVerticalStrut(10));
+        }
 
         JPanel crumbs = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         crumbs.setOpaque(false);

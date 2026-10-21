@@ -44,8 +44,13 @@ public final class TreeServer {
     }
 
     public TreeServer(ObjectNode root, String title, ViewRegistry views, List<TreeColumn> treeColumns) {
+        this(root, new HtmlRenderer(root, title, views, treeColumns));
+    }
+
+    /** Mit fertig eingerichtetem Renderer (Vorlagen, Konfiguration) – so nutzt es {@link ObjectViewer}. */
+    public TreeServer(ObjectNode root, HtmlRenderer renderer) {
         this.root = root;
-        this.renderer = new HtmlRenderer(root, title, views, treeColumns);
+        this.renderer = renderer;
     }
 
     /** Startet auf localhost (nur von diesem Rechner erreichbar). */
@@ -70,6 +75,18 @@ public final class TreeServer {
             String path = ex.getRequestURI().getPath();
             Map<String, List<String>> q = parse(ex.getRequestURI().getRawQuery());
             HtmlRenderer.Layout layout = HtmlRenderer.Layout.fromCode(first(q, "layout"));
+
+            if (path.startsWith("/static/")) {
+                // style.css, app.js und eigene Dateien aus dem Vorlagen-Ordner (sonst Standard aus dem JAR)
+                String name = URLDecoder.decode(path.substring("/static/".length()), StandardCharsets.UTF_8);
+                Optional<byte[]> data = renderer.templates().bytes(name);
+                if (data.isEmpty()) {
+                    send(ex, 404, "text/plain; charset=utf-8", "Nicht gefunden: " + name);
+                } else {
+                    send(ex, 200, contentType(name), data.get());
+                }
+                return;
+            }
 
             switch (path) {
                 case "/" -> {
@@ -153,13 +170,31 @@ public final class TreeServer {
     }
 
     private static void send(HttpExchange ex, int status, String type, String body) throws IOException {
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        send(ex, status, type, body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static void send(HttpExchange ex, int status, String type, byte[] bytes) throws IOException {
         ex.getResponseHeaders().set("Content-Type", type);
         ex.getResponseHeaders().set("Cache-Control", "no-store");
         ex.sendResponseHeaders(status, bytes.length);
         try (OutputStream os = ex.getResponseBody()) {
             os.write(bytes);
         }
+    }
+
+    private static String contentType(String name) {
+        String n = name.toLowerCase(java.util.Locale.ROOT);
+        if (n.endsWith(".css")) return "text/css; charset=utf-8";
+        if (n.endsWith(".js")) return "text/javascript; charset=utf-8";
+        if (n.endsWith(".html") || n.endsWith(".htm")) return "text/html; charset=utf-8";
+        if (n.endsWith(".svg")) return "image/svg+xml";
+        if (n.endsWith(".png")) return "image/png";
+        if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return "image/jpeg";
+        if (n.endsWith(".gif")) return "image/gif";
+        if (n.endsWith(".ico")) return "image/x-icon";
+        if (n.endsWith(".woff2")) return "font/woff2";
+        if (n.endsWith(".json")) return "application/json";
+        return "application/octet-stream";
     }
 
     private static String readBody(InputStream in) throws IOException {

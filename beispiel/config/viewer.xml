@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  viewer.xml der Beispielanwendung (Baufinanzierung).
+
+  Änderungen wirken sofort: speichern, Seite neu laden (Browser) bzw. automatisch (Swing).
+  Bei Fehlern erscheint oben ein rotes Band mit Zeilennummer; bis zur Korrektur gilt die letzte gültige Fassung.
+  Vollständige Übersicht aller Elemente: README.md, Abschnitt "viewer.xml".
+
+  Listen (keys, options) werden mit | getrennt.
+-->
+<objektviewer title="Objekt-Viewer">
+
+  <!-- ===== Objekttypen: Kennung (wie im Code), Anzeigetext, Icon ===== -->
+  <types>
+    <!-- Vorgang, Personen, Angebote -->
+    <type id="VORGANGSDATEN" label="Vorgangsdaten" icon="🗃"/>
+    <type id="VORGANG"       label="Vorgang"       icon="📋"/>
+    <type id="VIN_VORGANG"   label="VinVorgang"    icon="📋"/>
+    <type id="VORHABEN"      label="Vorhaben"      icon="🏗"/>
+    <type id="VARIANTE"      label="Variante"      icon="🔀"/>
+    <type id="ANGEBOT"       label="Angebot"       icon="💶"/>
+    <type id="NEUES_ANGEBOT" label="NeuesAngebot"  icon="💶"/>
+    <type id="ASE"           label="Ase"           icon="📎"/>
+    <type id="PERSON"        label="Person"        icon="👤"/>
+    <type id="VERBUND"       label="Verbund"       icon="👥"/>
+    <type id="VIN_PERSON"    label="VinPerson"     icon="👤"/>
+    <type id="VIN_ANGEBOT"   label="VinAngebot"    icon="💶"/>
+    <type id="ADRESSE"       label="Adresse"       icon="📍"/>
+    <type id="VP_VERTRAG"    label="VpVertrag"     icon="📑"/>
+    <type id="VP_KONTO"      label="VpKonto"       icon="🏦"/>
+    <type id="FZVE"          label="Fzve"          icon="⚙"/>
+
+    <!-- Objekt, Grundbuch, Bewertung -->
+    <type id="GEBAEUDE"                label="Gebaeude"                icon="🏠"/>
+    <type id="GESAMTGRUNDPFANDRECHT"   label="Gesamtgrundpfandrecht"   icon="⚖"/>
+    <type id="ABTEILUNG_1"             label="Abteilung_1"             icon="Ⅰ"/>
+    <type id="ABTEILUNG_2"             label="Abteilung_2"             icon="Ⅱ"/>
+    <type id="ABTEILUNG_3"             label="Abteilung_3"             icon="Ⅲ"/>
+    <type id="BESTANDVERZEICHNIS"      label="Bestandverzeichnis"      icon="📒"/>
+    <type id="AUFSCHRIFT"              label="Aufschrift"              icon="🏷"/>
+    <type id="GRUNDSTUECK"             label="Grundstueck"             icon="🗺"/>
+    <type id="GRUNDBUCHBLATT"          label="Grundbuchblatt"          icon="📘"/>
+    <type id="FAEH_SIMULATION"         label="FaeHSimulation"          icon="🧮"/>
+    <type id="GEGENENTSCHEIDUNGSGRUND" label="Gegenentscheidungsgrund" icon="❗"/>
+    <type id="SPK_BAUFI_PRODUKT"       label="SpkBaufiProdukt"         icon="📦"/>
+    <type id="WERT_ERMITTLUNG"         label="WertErmittlung"          icon="📐"/>
+    <type id="FAEH_ERMITTELN_DOKUMENT" label="FaehErmittelnDokument"   icon="📄"/>
+  </types>
+
+  <!-- ===== Spalten der Baumtabelle ===== -->
+  <treetable>
+    <column kind="name"  header="Objektname"/>
+    <column kind="field" key="ObjektId"/>
+    <column kind="type"  header="Typ"/>
+    <column kind="field" key="Beziehungsart"/>
+    <column kind="field" key="Bezeichnung"/>
+  </treetable>
+
+  <!-- ===== Ansichten je Objekttyp ===== -->
+  <views>
+
+    <view name="Vorgang" type="VORGANG">
+      <column width="1">
+        <segment title="Vorgang">
+          <output key="ObjektId"/>
+          <text   key="Bezeichnung"/>
+          <combo  key="Status"  options="Neu | In Bearbeitung | Entscheidung | Abgeschlossen"/>
+          <combo  key="Berater" source="berater" free="true"/>
+          <button label="Speichern"/>
+        </segment>
+      </column>
+      <column width="0.8">
+        <segment title="Weitere Felder" layout="vertical">
+          <fields select="remaining"/>
+        </segment>
+      </column>
+    </view>
+
+    <view name="Variante" type="VARIANTE">
+      <column width="1.2">
+        <segment title="Variante">
+          <output key="ObjektId"/>
+          <text   key="Bezeichnung"/>
+          <combo  key="Status" options="Entwurf | Angeboten | Angenommen | Abgelehnt"/>
+          <list   key="Produkte" multiple="true" rows="5"
+                  options="Annuitätendarlehen | KfW-Wohneigentum | Bausparvertrag | Forward-Darlehen | Riester-Darlehen"/>
+          <button label="Speichern"/>
+          <button label="Als Hauptvariante markieren" action="alsHauptvariante"/>
+        </segment>
+      </column>
+      <column width="1">
+        <segment title="Kennzahlen" layout="horizontal">
+          <fields keys="Gesamtkosten | Darlehenssumme | Eigenkapital | Beleihungsauslauf"/>
+        </segment>
+        <segment title="Bemerkung">
+          <text key="Bemerkung" rows="5"/>
+          <button label="Bemerkung speichern"/>
+        </segment>
+        <segment title="Weitere Felder" layout="vertical">
+          <fields select="remaining"/>
+        </segment>
+      </column>
+    </view>
+
+    <view name="Angebot" type="ANGEBOT">
+      <column width="1">
+        <segment title="Konditionen">
+          <text  key="Darlehensbetrag" label="Darlehensbetrag €"/>
+          <text  key="Sollzins"        label="Sollzins %"/>
+          <text  key="Tilgung"         label="Anf. Tilgung %"/>
+          <combo key="Zinsbindung"     options="5 Jahre | 10 Jahre | 15 Jahre | 20 Jahre"/>
+          <button label="Rate berechnen" action="rateBerechnen"/>
+          <button label="Speichern"/>
+        </segment>
+      </column>
+      <column width="1">
+        <segment title="Ergebnis" layout="vertical">
+          <fields keys="Monatsrate | Restschuld nach Zinsbindung | Gezahlte Zinsen"/>
+        </segment>
+        <segment title="Weitere Felder" layout="vertical">
+          <fields select="remaining"/>
+        </segment>
+      </column>
+    </view>
+
+    <view name="Person" type="PERSON">
+      <column width="1">
+        <segment title="Stammdaten" layout="vertical">
+          <fields keys="Vorname | Nachname | Geburtsdatum | Familienstand"/>
+        </segment>
+      </column>
+      <column width="1">
+        <segment title="Kontakt">
+          <text  key="E-Mail"/>
+          <text  key="Telefon"/>
+          <combo key="Kontaktweg" options="E-Mail | Telefon | Post"/>
+          <button label="Speichern"/>
+        </segment>
+      </column>
+      <column width="0.8">
+        <segment title="Weitere Felder" layout="vertical">
+          <fields select="remaining"/>
+        </segment>
+      </column>
+    </view>
+
+  </views>
+</objektviewer>

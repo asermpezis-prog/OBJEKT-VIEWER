@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  viewer.xml – Konfiguration des Objekt-Viewers.
+
+  Änderungen wirken sofort: Datei speichern, Seite neu laden (Browser) bzw. automatisch (Swing).
+  Bei Fehlern erscheint oben ein rotes Band mit Zeilennummer; bis zur Korrektur gilt die letzte gültige Fassung.
+
+  Listen (keys, options) werden mit | getrennt:  keys="Name | Vorname"   options="Offen | Erledigt"
+-->
+<objektviewer title="Objekt-Viewer">
+
+  <!-- ===== Objekttypen: Kennung (wie im Code), Anzeigetext, Icon (Emoji oder Zeichen) ===== -->
+  <types>
+    <type id="BEISPIEL" label="Beispiel" icon="📄"/>
+  </types>
+
+  <!-- ===== Spalten der Baumtabelle =====
+       kind="name"   Objektname mit Einrückung (Pflicht, genau einmal sinnvoll)
+       kind="type"   Anzeigetext des Typs
+       kind="field"  Wert eines Felds: key="…"   (header="…" = Überschrift, sonst der Key)
+  -->
+  <treetable>
+    <column kind="name" header="Objektname"/>
+    <column kind="type" header="Typ"/>
+  </treetable>
+
+  <!-- ===== Ansichten je Objekttyp =====
+       <view type="TYP">                  type kann mehrere Typen nennen: type="A | B"
+                                          children="false" blendet die Unterobjekte unter den Frames aus
+         <column width="1">               1 bis 3 Spalten, width = relative Breite
+           <segment title="…" height="1" layout="vertical|horizontal">
+                                          beliebig viele Segmente je Spalte, height = relative Höhe,
+                                          layout = Darstellung der Feld-Tabellen (ohne Angabe: Umschalter im Header)
+
+             Inhalte eines Segments:
+             <fields keys="A | B"/>               Tabelle mit genau diesen Feldern
+             <fields select="all"/>               Tabelle mit allen Feldern
+             <fields select="remaining"/>         alle Felder, die sonst nirgends in der Ansicht stehen
+             <text key="A" label="…" rows="1"/>   Eingabefeld (rows > 1: mehrzeilig)
+             <output key="A" label="…"/>          nur Anzeige
+             <combo key="A" options="x | y"/>     Dropdown; free="true" = freie Eingabe erlaubt;
+                                                  source="name" = Werte aus dem Code statt options
+             <list key="A" options="x | y" multiple="true" rows="4"/>   sichtbare Liste
+             <button label="Speichern"/>          speichert alle Eingaben
+             <button label="…" action="name"/>    speichert und ruft die im Code angemeldete Aktion auf
+           </segment>
+         </column>
+       </view>
+  -->
+  <views>
+    <view name="Beispiel" type="BEISPIEL">
+      <column width="1">
+        <segment title="Bearbeiten">
+          <text key="Bezeichnung"/>
+          <combo key="Status" options="Offen | In Arbeit | Erledigt"/>
+          <button label="Speichern"/>
+        </segment>
+      </column>
+      <column width="1">
+        <segment title="Alle Felder" layout="vertical">
+          <fields select="remaining"/>
+        </segment>
+      </column>
+    </view>
+  </views>
+
+</objektviewer>

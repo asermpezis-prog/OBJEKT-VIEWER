@@ -1,177 +1,219 @@
-# Objekt-Viewer
+# Objekt-Viewer – Framework
 
-Zeigt ein Objekt und seine Unterobjekte an – wahlweise **im Browser** oder als **Swing-Fenster**.
-Reines Java (17 oder neuer, getestet mit 21), keine Bibliotheken.
+Framework zum Anzeigen und Bearbeiten von Objektbäumen: Objekte mit Typ, Feldern (Key/Value) und
+Unterobjekten – **im Browser** oder als **Swing-Fenster**. Reines Java 17+, keine Bibliotheken.
 
-- **Baum** links als Navigation, oder wahlweise als **Baumtabelle** mit Spalten, Filter und Sortierung
-- **Header** mit Pfad, Name, Typ und den Umschaltern
-- **Main** mit Feldern und Bedienelementen in bis zu 3 verschiebbaren Spalten, darunter die Unterobjekte
+- Navigation als **Baum** oder **Baumtabelle** (Spalten, Filter, Sortierung, Auf-/Zuklappen)
+- **Ansichten je Objekttyp**: bis zu 3 verschiebbare Spalten mit Segmenten; darin Feld-Tabellen,
+  Textfelder, ComboBoxen, ComboListen und Buttons mit Java-Aktionen
+- **Lazy Loading** von Unterobjekten
+- **Nach der Entwicklung selbst anpassbar, ohne Neukompilieren und ohne Neustart:**
+  Objekttypen, Baumtabelle und Ansichten in `viewer.xml`, Aussehen in `templates/`
 
-## Starten
+---
 
-**Browser-Version** (kleiner Webserver aus dem JDK, läuft auch auf Servern ohne Bildschirm):
-
-```
-./run.sh                  (Linux/macOS)  -> http://localhost:8080/
-./run.sh 9090             anderer Port
-./run.sh 8080 0.0.0.0     aus dem Netzwerk erreichbar, z. B. http://hawk:8080/
-run.bat                   (Windows, gleiche Parameter)
-```
-
-**Swing-Version** (eigenes Fenster, kein Webserver, braucht eine grafische Oberfläche):
+## Schnellstart (Beispielanwendung)
 
 ```
-./run-swing.sh            (Linux/macOS)
-run-swing.bat             (Windows)
+./run.sh                       Browser-Version  -> http://localhost:8080/
+./run.sh 8080 0.0.0.0          aus dem Netzwerk erreichbar, z. B. http://hawk:8080/
+./run-swing.sh                 Swing-Fenster (braucht eine grafische Oberfläche)
+```
+Windows: `run.bat`, `run-swing.bat`. Das Beispiel liest `beispiel/config/` – dort einfach
+`viewer.xml` oder `templates/style.css` ändern, speichern und die Seite neu laden.
+
+## Projektaufbau
+
+```
+framework/src/          Framework-Quellcode (wird zu dist/objektviewer.jar)
+framework/resources/    Standard-Vorlagen im JAR (page.html, style.css, app.js, viewer.xml)
+beispiel/src/           Beispielanwendung: Daten, Lazy-Loader, Button-Aktionen
+beispiel/config/        viewer.xml + templates/ der Beispielanwendung  ← zum Bearbeiten
+build.sh / build.bat    baut dist/objektviewer.jar und das Beispiel
 ```
 
-Beide Versionen benutzen **dieselben Daten, Ansichten, Elemente und Baumtabellen-Spalten** aus `Main.java`.
-Was dort definiert ist, gilt für beide. Speichern und Button-Aktionen laufen in beiden über `FormSubmit`
-und verhalten sich daher gleich.
+---
+
+## Im eigenen Projekt einsetzen
+
+**1. JAR bauen:** `./build.sh` → `dist/objektviewer.jar` ins eigene Projekt übernehmen (Classpath).
+
+**2. Konfigurationsordner anlegen:**
+```
+java -jar objektviewer.jar init config
+```
+legt `config/viewer.xml` (kommentierte Vorlage) und `config/templates/` (page.html, style.css, app.js) an.
+
+**3. Im Code nur das, was Code sein muss** – Daten, Loader, Aktionen:
+```java
+import de.objektbaum.*;
+
+public class MeineApp {
+    static final ObjectType VORGANG = ObjectType.of("VORGANG");   // Text/Icon kommen aus viewer.xml
+    static final ObjectType PERSON  = ObjectType.of("PERSON");
+
+    public static void main(String[] args) throws Exception {
+        ObjectNode root = new ObjectNode("Vorgang 4711", VORGANG)
+                .field("Status", "Neu");
+        root.child("Personen", ObjectType.GRUPPE)
+            .lazy(parent -> datenbank.ladePersonen());             // erst beim Aufklappen laden
+
+        ObjectViewer viewer = ObjectViewer.builder()
+                .title("Meine Anwendung")
+                .root(root)
+                .configDir(Path.of("config"))                      // viewer.xml + templates/
+                .action("pruefen", (node, values) -> {             // <button action="pruefen"/>
+                    node.field("Geprüft", "ja");
+                    return "Geprüft.";                             // Meldung oben auf der Seite
+                })
+                .options("berater", node -> datenbank.berater())   // <combo source="berater"/>
+                .build();
+
+        viewer.startWeb("localhost", 8080);                       // Browser-Version
+        // viewer.openSwing();                                     // und/oder Swing-Fenster
+    }
+}
+```
+
+**4. Ansichten und Aussehen** in `config/` bearbeiten – siehe unten.
+
+`java -jar objektviewer.jar check config` prüft eine `viewer.xml`, ohne die Anwendung zu starten.
+
+### Was steht wo?
+
+| Was | Wo | Ändern ohne Neukompilieren |
+|---|---|---|
+| Daten, Lazy-Loader | Java (`ObjectNode`, `.lazy(...)`) | – |
+| Button-Aktionen, dynamische Auswahllisten | Java (`.action(...)`, `.options(...)`) | – |
+| Objekttypen: Anzeigetext, Icon | `viewer.xml` `<types>` | ✔ sofort |
+| Spalten der Baumtabelle | `viewer.xml` `<treetable>` | ✔ sofort (Swing: beim Neustart) |
+| Ansichten: Spalten, Segmente, Felder, Eingaben, Buttons | `viewer.xml` `<views>` | ✔ sofort |
+| Anwendungstitel | `viewer.xml` `title="…"` (sonst Code) | ✔ sofort |
+| Seitengerüst, Farben, Schriften, Verhalten im Browser | `templates/page.html`, `style.css`, `app.js` | ✔ sofort |
+
+„Sofort“ heißt: Datei speichern → Seite neu laden. Die Swing-Version aktualisiert sich innerhalb einer Sekunde selbst.
+
+### Fehler beim Bearbeiten
+
+Enthält `viewer.xml` einen Fehler, erscheint oben ein **rotes Band mit Zeilennummer** und einer Erklärung,
+was erlaubt ist (z. B. *„Zeile 42: Unbekanntes Attribut titel=… in &lt;segment&gt;. Erlaubt: title, height, layout“*).
+Bis zur Korrektur gilt die **letzte gültige Fassung** – ein Tippfehler legt die Anwendung nicht lahm.
+
+---
+
+## viewer.xml
+
+```xml
+<objektviewer title="Meine Anwendung">
+
+  <types>
+    <type id="VORGANG" label="Vorgang" icon="📋"/>
+  </types>
+
+  <treetable>
+    <column kind="name"  header="Objektname"/>
+    <column kind="field" key="ObjektId"/>
+    <column kind="type"  header="Typ"/>
+  </treetable>
+
+  <views>
+    <view name="Vorgang" type="VORGANG">
+      <column width="1">
+        <segment title="Bearbeiten">
+          <output key="ObjektId"/>
+          <text   key="Bezeichnung"/>
+          <combo  key="Status" options="Neu | In Arbeit | Erledigt"/>
+          <button label="Speichern"/>
+        </segment>
+      </column>
+      <column width="0.8">
+        <segment title="Weitere Felder" layout="vertical">
+          <fields select="remaining"/>
+        </segment>
+      </column>
+    </view>
+  </views>
+
+</objektviewer>
+```
+
+Listen (`keys`, `options`) werden mit **`|`** getrennt, weil Werte selbst Kommas enthalten können.
+Die mit `init` angelegte `viewer.xml` enthält alle Elemente als Kommentar zum Nachschlagen.
+
+| Element | Attribute | Bedeutung |
+|---|---|---|
+| `<objektviewer>` | `title` | Wurzel; Titel überschreibt den aus dem Code |
+| `<type>` | `id`*, `label`, `icon` | Objekttyp: Kennung wie im Code, Anzeigetext, Icon (Emoji/Zeichen) |
+| `<treetable><column>` | `kind`* = `name`/`type`/`field`, `key` (bei field), `header` | Spalten der Baumtabelle; `name` ist Pflicht |
+| `<view>` | `type`* (auch `A \| B`), `name`, `children`=true/false | Ansicht für einen oder mehrere Typen; `children="false"` blendet die Unterobjekte aus |
+| `<column>` | `width` (relativ, Standard 1) | 1 bis 3 Spalten je Ansicht |
+| `<segment>` | `title`*, `height` (relativ), `layout`=`vertical`/`horizontal` | Bereich in einer Spalte; `layout` gilt für die Feld-Tabellen darin |
+| `<fields>` | `keys="A \| B"` oder `select`=`all`/`remaining`, `layout` | Feld-Tabelle; `remaining` = alle Felder, die sonst nirgends stehen |
+| `<text>` | `key`*, `label`, `rows` | Eingabefeld, `rows` > 1 = mehrzeilig |
+| `<output>` | `key`*, `label`, `rows` | nur Anzeige |
+| `<combo>` | `key`*, `label`, `options` oder `source`, `free`, `editable` | Dropdown; `free="true"` erlaubt eigene Eingaben; `source` = Werte aus dem Code |
+| `<list>` | `key`*, `label`, `options` oder `source`, `multiple`, `rows`, `editable` | sichtbare Liste; `multiple="true"` speichert eine Liste |
+| `<button>` | `label`*, `action` | ohne `action`: speichert; mit: speichert und ruft die Aktion aus dem Code auf |
+
+\* = Pflicht. `layout`: `vertical` = Key/Value, `horizontal` = Keys als Spalten; ohne Angabe gilt der Umschalter im Header.
+
+Reihenfolge, welche Ansicht gilt: eigene Ansicht eines Knotens im Code (`knoten.view(...)`) →
+Ansicht aus `viewer.xml` → Ansicht aus dem Code (`builder.view(...)`) → Standarddarstellung (alle Felder + Unterobjekte).
+
+---
+
+## Templates (Browser-Version)
+
+| Datei | Inhalt |
+|---|---|
+| `page.html` | Seitengerüst mit Platzhaltern |
+| `style.css` | Aussehen; Farben zentral als Variablen in `:root` (hell) und im Dunkel-Block |
+| `app.js` | Verhalten: Baum/Baumtabelle, Filter, Sortieren, Frames ziehen, Nachladen |
+
+Platzhalter in `page.html` (Inhalte sind bereits sicher maskiert):
+
+| Platzhalter | Inhalt |
+|---|---|
+| `{{pageTitle}}` | Tab-Titel „Objekt – Anwendung“ |
+| `{{appTitle}}` | Anwendungstitel |
+| `{{objectName}}`, `{{objectType}}` | angezeigtes Objekt und sein Typ |
+| `{{nav}}` | Baum der Navigation |
+| `{{header}}` | Pfad, Titel, Umschalter, Meldung |
+| `{{treetable}}` | Baumtabelle |
+| `{{content}}` | Frames bzw. Felder und Unterobjekte |
+| `{{configError}}` | Fehlerband zu viewer.xml (leer, wenn alles stimmt) |
+
+Eigene Dateien (Logo, Schrift, Zusatz-CSS) einfach in `templates/` legen und mit `/static/<name>` einbinden,
+z. B. `<img src="/static/logo.svg">`. Es werden nur Dateien aus diesem Ordner ausgeliefert.
+
+**Wichtig bei Framework-Updates:** Eine Datei in `templates/` ersetzt die Standardfassung aus dem JAR vollständig.
+Wer eine Datei nicht anpasst, löscht sie einfach – dann gilt automatisch die aktuelle Standardfassung.
+`init <ordner> --force` überschreibt die Kopien mit den neuen Standardfassungen.
+
+---
+
+## Java-API (Kurzüberblick)
+
+| Klasse | Zweck |
+|---|---|
+| `ObjectViewer` | Einstieg: `builder()…build()`, dann `startWeb(host, port)` / `openSwing()` |
+| `ObjectNode` | Objekt: `field(k, v)`, `child(name, typ)`, `add(node)`, `lazy(loader)`, `reload()`, `view(nodeView)` |
+| `ObjectType` | Typ: `of("ID")`, `define(id, label, icon)`, `GRUPPE`, `UNBEKANNT` |
+| `Button.Action` | `(node, werte) -> "Meldung"` – Eingaben sind bereits gespeichert; Exception = Fehlermeldung |
+| `OptionSource` | `node -> List<String>` – Auswahlwerte für combo/list |
+| `NodeView`, `Column`, `Segment`, `FieldTable`, `TextField`, `ComboBox`, `ComboList`, `Button` | Ansichten im Code statt in XML |
+
+Gespeicherte Eingaben liegen in den Feldern der `ObjectNode`s (Arbeitsspeicher). Dauerhaft speichern
+(Datenbank, Datei) erledigt eine Button-Aktion.
+
+## Browser oder Swing
 
 | | Browser | Swing |
 |---|---|---|
 | Baum / Baumtabelle, Filter, Sortierung, Alle auf/zu | ✔ | ✔ |
-| Frames verschieben, Größen merken, Doppelklick = zurücksetzen | ✔ (im Browser gespeichert) | ✔ (Java Preferences) |
+| Frames verschieben, Größen merken, Doppelklick = zurücksetzen | ✔ | ✔ |
 | Textfeld, ComboBox, ComboListe, Buttons mit Java-Aktion | ✔ | ✔ |
-| Lazy Loading, Neu laden | ✔ | ✔ (im Hintergrund, Fenster bleibt bedienbar) |
+| Lazy Loading, Neu laden | ✔ | ✔ |
+| viewer.xml live | ✔ beim Neuladen der Seite | ✔ automatisch |
+| Templates (page.html, style.css, app.js) | ✔ | – (eigenes Swing-Aussehen) |
 | Zugriff von anderen Rechnern / ohne Bildschirm | ✔ | – |
-| Dunkles Farbschema nach Systemeinstellung | ✔ | – |
-
-Die Swing-Version zeigt die Typ-Symbole (Emoji), wenn eine passende Schrift vorhanden ist,
-sonst einen farbigen Kreis mit Anfangsbuchstaben.
-
-Eigenes Fenster aus dem eigenen Code:
-
-```java
-SwingUtilities.invokeLater(() -> new SwingViewer(root, "Objekt-Viewer", views, spalten).open());
-```
-
-## Eigene Objekte
-
-In `Main.beispielDaten()` den Baum aufbauen:
-
-```java
-ObjectNode vorgang = new ObjectNode("Vorgang Baufinanzierung", ObjectType.VORGANG)
-        .field("ObjektId", "8893-08-21-19.09.24.405926")
-        .field("Status", "In Bearbeitung");
-
-ObjectNode personen = vorgang.child("Personen", ObjectType.GRUPPE);      // Sammelknoten
-personen.child("Max Mustermann", ObjectType.PERSON).field("Beziehungsart", "Antragsteller");
-```
-
-Die Typen stehen in `ObjectType.java` (Vorgang, Vorhaben, Variante, Angebot, Person, Grundstueck,
-Grundbuchblatt, … UNBEKANNT) und können frei angepasst werden (Name, Anzeigetext, Icon).
-`GRUPPE` ist für Sammelknoten wie „Personen“ oder „ASEs_AM_VORGANG“ gedacht und hat keinen Typtext.
-
-## Baum oder Baumtabelle
-
-Im Header zwischen **Baum** (Navigation links) und **Baumtabelle** umschalten; die Wahl merkt sich der Browser.
-
-Die Baumtabelle:
-- Spalten frei wählbar, Standard: Objektname und Typ
-- Filterzeile: `*` = alles, Text = enthält, `*` und `?` als Platzhalter (z. B. `VHV_44*`). Treffer werden mit ihren Elternknoten gezeigt
-- ⇅ sortiert die Geschwister innerhalb jedes Knotens, erneuter Klick dreht die Richtung
-- **Alle auf / Alle zu**; lazy Knoten werden dabei nicht ungewollt geladen, sondern erst per `+`
-- die ausgewählte Zeile ist markiert (✔), ein Klick auf einen Namen öffnet das Objekt
-- die Höhe des Bereichs lässt sich unten rechts ziehen
-
-```java
-List<TreeColumn> spalten = List.of(
-        TreeColumn.name("Objektname"),
-        TreeColumn.field("ObjektId"),
-        TreeColumn.type("Typ"),
-        TreeColumn.field("Beziehungsart"),
-        TreeColumn.field("Bezeichnung"));
-
-new TreeServer(root, "Objekt-Viewer", views, spalten).start(8080);
-```
-
-## Ansichten: Spalten und Segmente (Frames)
-
-Pro Objekttyp lässt sich festlegen, wie der Main-Bereich aufgeteilt ist: 1 bis 3 Spalten, jede mit beliebig
-vielen Segmenten untereinander. Alle Trennlinien lassen sich mit der Maus verschieben (oder per Tab + Pfeiltasten);
-die Größen merkt sich der Browser pro Ansicht, Doppelklick auf eine Trennlinie setzt sie zurück.
-
-```java
-ViewRegistry views = new ViewRegistry()
-        .register(ObjectType.ANGEBOT, NodeView.of("Angebot",
-                Column.of(
-                        Segment.of("Konditionen",
-                                TextField.input("Darlehensbetrag"),
-                                TextField.input("Sollzins").label("Sollzins %"),
-                                ComboBox.of("Zinsbindung", "5 Jahre", "10 Jahre", "15 Jahre"),
-                                Button.of("Rate berechnen", (node, values) -> {
-                                    node.field("Monatsrate", "…");
-                                    return "Rate berechnet";          // Meldung oben auf der Seite
-                                }),
-                                Button.save("Speichern"))),
-                Column.of(
-                        Segment.fields("Ergebnis", "Monatsrate").vertical(),
-                        Segment.remainingFields("Weitere Felder")).width(0.8)));
-```
-
-### Inhalte eines Segments
-
-| Element | Bedeutung |
-|---|---|
-| `FieldTable.of(keys…)` / `.all()` / `.remaining()` | Felder als Tabelle; `remaining` = alle Felder, die sonst nirgends in der Ansicht stehen |
-| `TextField.input(key)` | Eingabefeld, `.rows(n)` mehrzeilig, `.label("…")` eigene Beschriftung |
-| `TextField.output(key)` | nur Anzeige |
-| `ComboBox.of(key, werte…)` | Dropdown; `.freeInput()` = Werte als Vorschläge, freie Eingabe erlaubt; `.readOnly()` |
-| `ComboList.of(key, werte…)` | sichtbare Liste; `.multiple()` Mehrfachauswahl (gespeichert als `List<String>`), `.rows(n)` |
-| `Button.save(label)` | speichert alle Eingaben |
-| `Button.of(label, aktion)` | speichert alle Eingaben, führt dann die Aktion aus; Rückgabetext = Meldung, Exception = Fehlermeldung |
-
-Auswahlwerte können statt fester Werte auch dynamisch kommen: `ComboBox.of("Berater", node -> ladeBerater())`.
-
-Kurzformen: `Segment.fields(titel, keys…)`, `Segment.allFields(titel)`, `Segment.remainingFields(titel)`.
-`Segment.vertical()` / `.horizontal()` legt die Darstellung der Tabellen fest, ohne Angabe gilt der Umschalter im Header.
-`.height(n)` / `Column.width(n)` setzen relative Startgrößen, `NodeView.withoutChildren()` blendet die Unterobjekte aus.
-
-Einzelne Knoten können die Ansicht ihres Typs überschreiben: `knoten.view(NodeView.of(...))`.
-Typen ohne Ansicht werden in der Standarddarstellung gezeigt (alle Felder, darunter die Unterobjekte).
-Mehr als 3 Spalten oder leere Spalten/Segmente ergeben beim Start eine `IllegalArgumentException`.
-
-Enter in einem Textfeld speichert nur, ohne eine Button-Aktion auszulösen.
-
-## Lazy Loading
-
-Unterobjekte können erst bei Bedarf geladen werden, z. B. aus einer Datenbank:
-
-```java
-vorgang.child("VMGOs", ObjectType.GRUPPE)
-        .lazy(parent -> datenbank.ladeKinderVon(parent.name()));   // List<ObjectNode>
-```
-
-- Geladen wird beim ersten Zugriff auf `children()`: wenn das Objekt geöffnet oder im Baum bzw. in der Baumtabelle aufgeklappt wird.
-- Jeder Knoten wird genau einmal geladen, auch bei gleichzeitigen Zugriffen.
-- Schlägt der Loader fehl, wird die Fehlermeldung angezeigt; beim nächsten Versuch wird erneut geladen.
-- **↻ Neu laden** im Header (nur bei lazy Objekten) verwirft die Kinder und lädt sie frisch.
-- Geladene Kinder können selbst wieder lazy sein (beliebig tief).
-
-Nützliche Methoden an `ObjectNode`: `isLazy()`, `isLoaded()`, `loadedChildren()` (ohne zu laden), `ensureLoaded()`, `reload()`.
-
-In den Beispieldaten sind `ASEs_AM_VORGANG`, `ASEs_AM_VORHABEN`, `ASEs_AN_VARIANTE` und `VMGOs` lazy;
-jeder Ladevorgang erscheint in der Konsole.
-
-## Dateien
-
-| Datei | Inhalt |
-|---|---|
-| `ObjectNode.java` | Objekt: Name, Typ, Felder, Unterobjekte, eigene Ansicht |
-| `ObjectType.java` | Enum der Objekttypen |
-| `NodeView.java`, `Column.java`, `Segment.java` | Ansicht: Spalten und Segmente |
-| `Element.java`, `FieldTable.java`, `TextField.java`, `ComboBox.java`, `ComboList.java`, `Button.java`, `OptionSource.java` | Inhalte der Segmente |
-| `ViewRegistry.java` | Ansicht pro Objekttyp |
-| `TreeColumn.java` | Spalten der Baumtabelle |
-| `ChildLoader.java`, `ChildLoadException.java` | Nachladen von Unterobjekten |
-| `FormSubmit.java` | Speichern der Eingaben und Button-Aktionen (für beide Versionen) |
-| `HtmlRenderer.java` | Browser: baut die HTML-Seite (Navigation, Baumtabelle, Header, Frames, CSS, JS) |
-| `TreeServer.java` | Browser: Webserver aus dem JDK (Seiten, Nachladen, Formular-Aktionen) |
-| `Main.java` | Browser: Startpunkt; außerdem Ansichten und Beispieldaten für beide Versionen |
-| `MainSwing.java` | Swing: Startpunkt |
-| `swing/SwingViewer.java` | Swing: Fenster, Header, Inhalt, Unterobjekte |
-| `swing/NavTree.java`, `swing/TreeTablePanel.java` | Swing: Navigation und Baumtabelle |
-| `swing/FramesPanel.java`, `swing/Splits.java` | Swing: Frames mit Segmenten, verschiebbare Bereiche |
-| `swing/Ui.java` | Swing: Farben, Schriften, Tabellen, Buttons |

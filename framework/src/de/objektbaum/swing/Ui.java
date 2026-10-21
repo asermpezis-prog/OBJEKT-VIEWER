@@ -35,7 +35,6 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -158,7 +157,8 @@ final class Ui {
 
     // ------------------------------------------------------------------ Icons
 
-    private static final Map<ObjectType, Icon> ICONS = new EnumMap<>(ObjectType.class);
+    /** Zwischenspeicher; Schlüssel enthält Icon und Text, damit Änderungen aus der Konfiguration greifen. */
+    private static final Map<String, Icon> ICONS = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * Icon eines Typs: das Emoji der Browser-Version, wenn eine Schrift es darstellen kann,
@@ -166,7 +166,7 @@ final class Ui {
      */
     static Icon typeIcon(ObjectType t, int size) {
         if (size == 16) {
-            return ICONS.computeIfAbsent(t, x -> createIcon(x, 16));
+            return ICONS.computeIfAbsent(t.id() + "\u0000" + t.icon() + "\u0000" + t.label(), k -> createIcon(t, 16));
         }
         return createIcon(t, size);
     }
@@ -218,7 +218,7 @@ final class Ui {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            g2.setColor(type == ObjectType.GRUPPE ? new Color(0xf59e0b) : COLORS[type.ordinal() % COLORS.length]);
+            g2.setColor(type == ObjectType.GRUPPE ? new Color(0xf59e0b) : COLORS[Math.floorMod(type.id().hashCode(), COLORS.length)]);
             g2.fillOval(x + 1, y + 1, size - 2, size - 2);
             g2.setColor(Color.WHITE);
             if (type == ObjectType.GRUPPE) {
