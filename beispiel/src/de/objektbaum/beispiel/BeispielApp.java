@@ -94,7 +94,29 @@ public final class BeispielApp {
                     return "„" + node.name() + "“ ist jetzt die Hauptvariante.";
                 })
                 .options("berater", node -> List.of("A. Huber", "B. Wagner", "C. Schmid"))
+                // Auswahlwerte der Variante, z. B. aus Datenbank, Webservice oder Enum.
+                // Wird bei jedem Anzeigen aufgerufen; "node" ist das angezeigte Objekt.
+                .options("statusVariante", BeispielApp::statusWerte)
+                .options("produkte", BeispielApp::produkte)
                 .build();
+    }
+
+    // =====================================================================
+    // Auswahlwerte für viewer.xml (source="…")
+    // =====================================================================
+
+    /** Status einer Variante; abgelehnte Varianten können nur noch abgelehnt bleiben. */
+    private static List<String> statusWerte(ObjectNode node) {
+        if ("Abgelehnt".equals(node.fields().get("Status"))) {
+            return List.of("Abgelehnt");
+        }
+        return List.of("Entwurf", "Angeboten", "Angenommen", "Abgelehnt");
+    }
+
+    /** Produkte – in der Praxis z. B. aus dem Produktkatalog geladen. */
+    private static List<String> produkte(ObjectNode node) {
+        return List.of("Annuitätendarlehen", "KfW-Wohneigentum", "Bausparvertrag",
+                "Forward-Darlehen", "Riester-Darlehen");
     }
 
     // =====================================================================

@@ -81,9 +81,9 @@
         <segment title="Variante">
           <output key="ObjektId"/>
           <text   key="Bezeichnung"/>
-          <combo  key="Status" options="Entwurf | Angeboten | Angenommen | Abgelehnt"/>
-          <list   key="Produkte" multiple="true" rows="5"
-                  options="Annuitätendarlehen | KfW-Wohneigentum | Bausparvertrag | Forward-Darlehen | Riester-Darlehen"/>
+          <!-- Auswahlwerte kommen aus Java: .options("statusVariante", ...) und .options("produkte", ...) -->
+          <combo  key="Status"   source="statusVariante"/>
+          <list   key="Produkte" source="produkte" multiple="true" rows="5"/>
           <button label="Speichern"/>
           <button label="Als Hauptvariante markieren" action="alsHauptvariante"/>
         </segment>
