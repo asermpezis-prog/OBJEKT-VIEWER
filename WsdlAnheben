@@ -1,0 +1,120 @@
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+/**
+ * Hebt alte DynS-WSDLs (Namespace http://dyns, Typen inline) per Textersetzung so an,
+ * dass CXF fuer jede WSDL ein eigenes Package generiert - ohne <wsdlOption> in der pom.xml.
+ *
+ * Der Namespace wird NICHT geaendert (sonst passen die SOAP-Nachrichten nicht mehr zum Server).
+ * Stattdessen werden eingebettete Bindings eingefuegt:
+ *   - <jaxws:bindings><jaxws:package name="..."/></jaxws:bindings>   -> Package fuer Service/Port
+ *   - <annotation><appinfo><jaxb:schemaBindings><jaxb:package .../>   -> Package fuer die Typen
+ *
+ * Bereits angehobene WSDLs werden uebersprungen. WSDLs ohne Schema in http://dyns bleiben unveraendert.
+ * Java 8 kompatibel.
+ */
+public class WsdlAnheben {
+
+    // ---------- Konfiguration ----------
+    /** Ordner mit WSDLs (rekursiv). Kann auch der gesamte wsdl-Ordner sein. */
+    static final Path ORDNER = Paths.get("C:/Projekte/IDEA/VORGANG_READER/Dyn/Prod/main/wsdl");
+
+    static final String ALT_NS = "http://dyns";
+    static final String BASIS_PKG = "osplus.faeh.dyns.webservice";   // + .<service>
+    // -----------------------------------
+
+    static final String JAXB_NS = "http://java.sun.com/xml/ns/jaxb";
+    static final String JAXWS_NS = "http://java.sun.com/xml/ns/jaxws";
+
+    static final Pattern SCHEMA = Pattern.compile("<((?:[\\w.-]+:)?)schema\\b([^>]*?)(/?)>");
+    static final Pattern DEFINITIONS = Pattern.compile("<((?:[\\w.-]+:)?)definitions\\b[^>]*>");
+    static final Pattern TNS_ALT = Pattern.compile(
+            "targetNamespace\\s*=\\s*[\"']" + Pattern.quote(ALT_NS) + "[\"']");
+
+    public static void main(String[] args) throws IOException {
+        List<Path> wsdls;
+        try (Stream<Path> s = Files.walk(ORDNER)) {
+            wsdls = s.filter(p -> p.getFileName().toString().toLowerCase().endsWith(".wsdl"))
+                     .sorted().collect(Collectors.toList());
+        }
+
+        int angehoben = 0, uebersprungen = 0, ignoriert = 0;
+        for (Path w : wsdls) {
+            // ISO-8859-1 lesen/schreiben = byte-genau, egal welches Encoding die Datei hat
+            String alt = new String(Files.readAllBytes(w), StandardCharsets.ISO_8859_1);
+
+            if (alt.contains("schemaBindings") || alt.contains(JAXWS_NS)) {
+                uebersprungen++;
+                continue;
+            }
+
+            String pkg = BASIS_PKG + "." + pkgTeil(w.getFileName().toString()
+                    .replaceAll("(?i)\\.wsdl$", "")
+                    .replaceAll("(?i)ws$", ""));              // LOGINws.wsdl -> ...webservice.login
+
+            String neu = anheben(alt, pkg);
+            if (neu == null) {
+                ignoriert++;                                  // keine alte WSDL (kein Schema in http://dyns)
+                continue;
+            }
+            Files.write(w, neu.getBytes(StandardCharsets.ISO_8859_1));
+            System.out.println("angehoben: " + ORDNER.relativize(w) + " -> " + pkg);
+            angehoben++;
+        }
+
+        System.out.println();
+        System.out.println(angehoben + " angehoben, " + uebersprungen + " bereits angehoben, "
+                + ignoriert + " nicht betroffen (neue Art)");
+    }
+
+    /** @return angehobene WSDL oder null, wenn kein Schema mit targetNamespace http://dyns existiert */
+    static String anheben(String wsdl, String pkg) {
+        // 1. JAXB-Package in das (erste) Schema mit targetNamespace http://dyns einbetten
+        Matcher m = SCHEMA.matcher(wsdl);
+        StringBuffer sb = new StringBuffer();
+        boolean erledigt = false;
+        while (m.find()) {
+            String prefix = m.group(1);
+            String attrs = m.group(2);
+            boolean leer = !m.group(3).isEmpty();
+
+            if (!erledigt && !leer && TNS_ALT.matcher(attrs).find()) {
+                String jaxbAttrs = (attrs.contains("xmlns:jaxb=") ? "" : " xmlns:jaxb=\"" + JAXB_NS + "\"")
+                        + (attrs.contains("jaxb:version=") ? "" : " jaxb:version=\"2.1\"");
+                String ersatz = "<" + prefix + "schema" + attrs + jaxbAttrs + ">\n"
+                        + "<" + prefix + "annotation><" + prefix + "appinfo>"
+                        + "<jaxb:schemaBindings><jaxb:package name=\"" + pkg + "\"/></jaxb:schemaBindings>"
+                        + "</" + prefix + "appinfo></" + prefix + "annotation>";
+                m.appendReplacement(sb, Matcher.quoteReplacement(ersatz));
+                erledigt = true;
+            } else {
+                m.appendReplacement(sb, Matcher.quoteReplacement(m.group()));
+            }
+        }
+        m.appendTail(sb);
+        if (!erledigt) return null;
+        String ergebnis = sb.toString();
+
+        // 2. JAX-WS-Package vor <types> einfuegen (sonst direkt nach <definitions ...>)
+        Matcher d = DEFINITIONS.matcher(ergebnis);
+        if (!d.find()) return null;
+        String wsdlPrefix = d.group(1);
+        String jaxws = "<jaxws:bindings xmlns:jaxws=\"" + JAXWS_NS + "\">"
+                + "<jaxws:package name=\"" + pkg + "\"/></jaxws:bindings>\n";
+
+        Matcher t = Pattern.compile("<" + Pattern.quote(wsdlPrefix) + "types\\b").matcher(ergebnis);
+        int pos = t.find(d.end()) ? t.start() : d.end();
+        return ergebnis.substring(0, pos) + jaxws + ergebnis.substring(pos);
+    }
+
+    static String pkgTeil(String s) {
+        String p = s.toLowerCase().replaceAll("[^a-z0-9_]", "_");
+        return (p.isEmpty() || Character.isDigit(p.charAt(0))) ? "_" + p : p;
+    }
+}
