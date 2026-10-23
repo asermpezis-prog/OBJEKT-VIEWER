@@ -1,0 +1,176 @@
+package osplus.faeh.osplus.faeh.dyns.fassade.services;
+
+import osplus.faeh.MeldungsKonverter;
+import osplus.faeh.dyns.webservice.login.DynSKontext;
+import osplus.faeh.dyns.webservice.login.DynSMeldungen;
+import osplus.faeh.dyns.webservice.login.LOGINEingabe;
+import osplus.faeh.dyns.webservice.login.LOGINErgebnis;
+import osplus.faeh.osplus.faeh.dyns.webservice.DynSKontextBuilder;
+
+import javax.xml.namespace.QName;
+import javax.xml.ws.BindingProvider;
+import javax.xml.ws.Service;
+import javax.xml.ws.WebServiceClient;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * Generischer Aufruf beliebiger DynS-Prozesse nach dem Muster der generierten Klassen:
+ * <pre>
+ *   X           Port-Interface mit execute(XAufruf) : XErgebnis
+ *   XService    javax.xml.ws.Service
+ *   XAufruf     setKontext / setEingabe / setAnfrage
+ *   XEingabe, XAnfrage, XErgebnis (getMeldungen), DynSKontext
+ * </pre>
+ * Der Prozess wird allein aus der Klasse der Eingabe abgeleitet (XEingabe → X).
+ * Ports werden einmal pro Prozess erzeugt und gecacht.
+ *
+ * <pre>
+ * DynsSitzung s = DynsSitzung.anmelden("user", "pw");
+ * ANGEBOTLESENEingabe e = new ANGEBOTLESENEingabe();
+ * e.setPSANGEBOTNR("4711");
+ * ANGEBOTLESENErgebnis erg = s.ausfuehren(e);
+ * </pre>
+ */
+public class DynsSitzung extends ServiceBase {
+
+    private static final Map<Class<?>, Prozess> PROZESSE = new ConcurrentHashMap<>();
+
+    /** Login-Kontext inkl. Session-Token; wird für jeden Aufruf in den Ziel-Kontext kopiert. */
+    private final DynSKontext kontext;
+
+    private DynsSitzung(final DynSKontext kontext) {
+        this.kontext = kontext;
+    }
+
+    public static DynsSitzung anmelden(final String user, final String passwort) {
+        final DynSKontext k = DynSKontextBuilder.getDynsKontext(user);
+        final DynsSitzung sitzung = new DynsSitzung(k);
+
+        // Setter ohne JAXBElement: siehe dyns-bindings.xjb (generateElementProperty="false")
+        final LOGINEingabe eingabe = new LOGINEingabe();
+        eingabe.setPSUSERID(k.getBenutzer());
+        eingabe.setPSPASSWORT(passwort);
+        eingabe.setPSLOKATION("HOSTCICS");
+
+        final LOGINErgebnis ergebnis = sitzung.ausfuehren(eingabe);
+        k.setSessionToken(ergebnis.getPSSESSIONTOKEN());
+        return sitzung;
+    }
+
+    /** Führt den zur Eingabe gehörenden Prozess mit leerer Anfrage aus. */
+    public <R> R ausfuehren(final Object eingabe) {
+        return ausfuehren(eingabe, null);
+    }
+
+    /** Führt den zur Eingabe gehörenden Prozess aus. anfrage darf null sein. */
+    @SuppressWarnings("unchecked")
+    public <R> R ausfuehren(final Object eingabe, final Object anfrage) {
+        final Prozess p = PROZESSE.computeIfAbsent(eingabe.getClass(), Prozess::new);
+        try {
+            final Object aufruf = p.aufrufTyp.getDeclaredConstructor().newInstance();
+            p.setKontext.invoke(aufruf, kopiere(kontext, p.kontextTyp));
+            p.setEingabe.invoke(aufruf, eingabe);
+            p.setAnfrage.invoke(aufruf,
+                    anfrage != null ? anfrage : p.anfrageTyp.getDeclaredConstructor().newInstance());
+
+            final Object ergebnis = p.execute.invoke(p.port, aufruf);
+
+            final Object roh = ergebnis.getClass().getMethod("getMeldungen").invoke(ergebnis);
+            final DynSMeldungen meldungen = MeldungsKonverter.createDynSMeldungen(roh, p.name);
+            printMeldungen(meldungen, p.serviceName);
+            if (meldungen.isError()) {
+                throw new DynsException(p.name, meldungen);
+            }
+            return (R) ergebnis;
+        } catch (InvocationTargetException e) {
+            throw new DynsException(p.name, e.getCause());
+        } catch (ReflectiveOperationException e) {
+            throw new DynsException(p.name, e);
+        }
+    }
+
+    /** Kopiert gleichnamige Properties (getX → setX) in den servicespezifischen DynSKontext. */
+    private static Object kopiere(final Object quelle, final Class<?> zielTyp)
+            throws ReflectiveOperationException {
+        if (zielTyp.isInstance(quelle)) {
+            return quelle;
+        }
+        final Object ziel = zielTyp.getDeclaredConstructor().newInstance();
+        for (final Method get : quelle.getClass().getMethods()) {
+            final String n = get.getName();
+            final String prop;
+            if (n.startsWith("get") && !n.equals("getClass")) {
+                prop = n.substring(3);
+            } else if (n.startsWith("is")) {
+                prop = n.substring(2);
+            } else {
+                continue;
+            }
+            if (get.getParameterCount() != 0) {
+                continue;
+            }
+            try {
+                zielTyp.getMethod("set" + prop, get.getReturnType()).invoke(ziel, get.invoke(quelle));
+            } catch (NoSuchMethodException keinSetter) {
+                // Property existiert im Ziel nicht (oder ist eine Liste ohne Setter)
+            }
+        }
+        return ziel;
+    }
+
+    /** Alles, was pro Prozess einmal per Reflection ermittelt wird. */
+    private static final class Prozess {
+        final String name;
+        final QName serviceName;
+        final Class<?> aufrufTyp;
+        final Class<?> anfrageTyp;
+        final Class<?> kontextTyp;
+        final Method setKontext;
+        final Method setEingabe;
+        final Method setAnfrage;
+        final Method execute;
+        final Object port;
+
+        Prozess(final Class<?> eingabeTyp) {
+            final String simple = eingabeTyp.getSimpleName();
+            if (!simple.endsWith("Eingabe")) {
+                throw new IllegalArgumentException("Keine DynS-Eingabe: " + eingabeTyp.getName());
+            }
+            name = simple.substring(0, simple.length() - "Eingabe".length());
+            final String pkg = eingabeTyp.getPackage().getName();
+            try {
+                final Class<?> portTyp = Class.forName(pkg + "." + name);
+                final Class<?> serviceTyp = Class.forName(pkg + "." + name + "Service");
+                aufrufTyp = Class.forName(pkg + "." + name + "Aufruf");
+                anfrageTyp = Class.forName(pkg + "." + name + "Anfrage");
+                kontextTyp = Class.forName(pkg + ".DynSKontext");
+
+                final Service service = (Service) serviceTyp.getDeclaredConstructor().newInstance();
+                serviceName = service.getServiceName();
+                port = service.getPort(portTyp);
+                setzeSoapMessageHandler((BindingProvider) port);
+                setzeEndpointUrl((BindingProvider) port, endpointName(serviceTyp), "");
+
+                setKontext = aufrufTyp.getMethod("setKontext", kontextTyp);
+                setEingabe = aufrufTyp.getMethod("setEingabe", eingabeTyp);
+                setAnfrage = aufrufTyp.getMethod("setAnfrage", anfrageTyp);
+                execute = portTyp.getMethod("execute", aufrufTyp);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalArgumentException("DynS-Prozess nicht auflösbar: " + name, e);
+            }
+        }
+
+        /**
+         * Endpoint-Name aus dem WSDL-Dateinamen, z. B. ".../ANGEBOT_LESENws.wsdl" → "ANGEBOT_LESENws".
+         * Nötig, weil die Klassennamen keine Unterstriche mehr enthalten.
+         */
+        private static String endpointName(final Class<?> serviceTyp) {
+            final String loc = serviceTyp.getAnnotation(WebServiceClient.class).wsdlLocation();
+            final String datei = loc.substring(loc.lastIndexOf('/') + 1);
+            return datei.substring(0, datei.length() - ".wsdl".length());
+        }
+    }
+}
