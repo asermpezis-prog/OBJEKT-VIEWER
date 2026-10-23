@@ -1,0 +1,192 @@
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+import java.util.zip.ZipInputStream;
+
+/**
+ * 1. Entpackt alleProzesseWSDL3-0.zip (inkl. der inneren *.wsdl-so.zip) in je einen Ordner pro Service.
+ * 2. Erzeugt fuer jede WSDL einen <wsdlOption>-Eintrag mit eindeutigem Package fuer das cxf-codegen-plugin.
+ * 3. Schreibt die Eintraege in wsdlOptions.xml und - falls die Marker vorhanden sind - direkt in die pom.xml.
+ *
+ * Java 8 kompatibel.
+ */
+public class WsdlSetup {
+
+    // ---------- Konfiguration ----------
+    static final Path ZIP = Paths.get(
+            "C:/Doku/Bankfl_Baukasten/HTML_Kompendium/Handbuecher/Handbuch_aktuelles_Release_inf/download/alleProzesseWSDL3-0.zip");
+    static final Path BASEDIR = Paths.get("C:/Projekte/IDEA/VORGANG_READER/Dyn");
+    static final Path ZIEL = BASEDIR.resolve("Prod/main/wsdl/alle");
+    static final Path POM = BASEDIR.resolve("pom.xml");
+
+    static final String BASIS_PKG = "osplus.faeh.dyns.ws";      // + .<service>
+    static final String COMMON_PKG = "osplus.faeh.dyns.common"; // + .<xsd>
+
+    /** Zielordner vorher komplett leeren (sonst bleiben alte Ordner liegen). */
+    static final boolean ZIEL_VORHER_LEEREN = true;
+
+    /** Nur Services, deren Name auf diese Regex passt, z. B. "ABS_.*". null = alle. */
+    static final String FILTER = null;
+
+    /** XSDs, die in jedem Service vorkommen -> gemeinsames Package statt Kopie pro Service. */
+    static final Set<String> SHARED_XSD = new HashSet<>(Arrays.asList(
+            "osplus.dyns.dscom.xsd", "fo-base.xsd", "fo-datatypes.xsd", "fo-dao-bs-base.xsd"));
+
+    static final String BEGIN = "<!-- WSDL-OPTIONS-BEGIN -->";
+    static final String END = "<!-- WSDL-OPTIONS-END -->";
+    static final Pattern TNS = Pattern.compile("targetNamespace\\s*=\\s*[\"']([^\"']+)[\"']");
+    // -----------------------------------
+
+    public static void main(String[] args) throws IOException {
+        if (ZIEL_VORHER_LEEREN) loeschen(ZIEL);
+        Files.createDirectories(ZIEL);
+
+        int n = entpacken();
+        System.out.println(n + " Services entpackt nach " + ZIEL);
+
+        String xml = wsdlOptionsErzeugen();
+        Path out = BASEDIR.resolve("wsdlOptions.xml");
+        Files.write(out, xml.getBytes(StandardCharsets.UTF_8));
+        System.out.println("Geschrieben: " + out);
+
+        inPomEinsetzen(xml);
+    }
+
+    // ---------- 1. Entpacken ----------
+    static int entpacken() throws IOException {
+        int count = 0;
+        try (ZipFile zip = new ZipFile(ZIP.toFile())) {
+            for (ZipEntry e : Collections.list(zip.entries())) {
+                if (e.isDirectory()) continue;
+
+                String datei = dateiname(e.getName());
+                String lower = datei.toLowerCase();
+                String service;
+                if (lower.endsWith(".wsdl-so.zip")) service = datei.substring(0, datei.length() - ".wsdl-so.zip".length());
+                else if (lower.endsWith(".zip"))    service = datei.substring(0, datei.length() - ".zip".length());
+                else if (lower.endsWith(".wsdl"))   service = datei.substring(0, datei.length() - ".wsdl".length());
+                else continue;
+
+                if (FILTER != null && !service.matches(FILTER)) continue;
+
+                Path ordner = ZIEL.resolve(service);
+                Files.createDirectories(ordner);
+
+                try (InputStream in = zip.getInputStream(e)) {
+                    if (lower.endsWith(".zip")) {
+                        ZipInputStream inner = new ZipInputStream(in);
+                        ZipEntry ie;
+                        while ((ie = inner.getNextEntry()) != null) {
+                            if (ie.isDirectory()) continue;
+                            Files.copy(inner, ordner.resolve(dateiname(ie.getName())), StandardCopyOption.REPLACE_EXISTING);
+                        }
+                    } else {
+                        Files.copy(in, ordner.resolve(datei), StandardCopyOption.REPLACE_EXISTING);
+                    }
+                }
+                count++;
+            }
+        }
+        return count;
+    }
+
+    // ---------- 2. wsdlOptions erzeugen ----------
+    static String wsdlOptionsErzeugen() throws IOException {
+        List<Path> dateien;
+        try (Stream<Path> s = Files.walk(ZIEL)) {
+            dateien = s.filter(Files::isRegularFile).sorted().collect(Collectors.toList());
+        }
+
+        // gemeinsame Namespaces -> gemeinsames Package
+        Map<String, String> shared = new TreeMap<>();
+        for (Path p : dateien) {
+            String name = p.getFileName().toString();
+            if (SHARED_XSD.contains(name)) {
+                String ns = targetNamespace(p);
+                if (ns != null) {
+                    String ohneEndung = name.substring(0, name.length() - ".xsd".length());
+                    String teil = ohneEndung.substring(ohneEndung.lastIndexOf('.') + 1); // osplus.dyns.dscom -> dscom
+                    shared.putIfAbsent(ns, COMMON_PKG + "." + pkgTeil(teil));
+                }
+            }
+        }
+
+        List<Path> wsdls = dateien.stream()
+                .filter(p -> p.getFileName().toString().toLowerCase().endsWith(".wsdl"))
+                .collect(Collectors.toList());
+
+        StringBuilder sb = new StringBuilder();
+        Set<String> vergeben = new HashSet<>();
+        for (Path w : wsdls) {
+            String basis = w.getFileName().toString()
+                    .replaceAll("(?i)\\.wsdl$", "")
+                    .replaceAll("(?i)ws$", "");              // ABS_AUFTRAG_AENDERNws -> ABS_AUFTRAG_AENDERN
+            String pkg = pkgTeil(basis);
+            String eindeutig = pkg;
+            int i = 2;
+            while (!vergeben.add(eindeutig)) eindeutig = pkg + "_" + i++;
+
+            String rel = BASEDIR.relativize(w).toString().replace('\\', '/');
+            sb.append("        <wsdlOption>\n")
+              .append("          <wsdl>${basedir}/").append(rel).append("</wsdl>\n")
+              .append("          <packagenames>\n");
+            for (Map.Entry<String, String> e : shared.entrySet()) {
+                sb.append("            <packagename>").append(e.getKey()).append('=').append(e.getValue()).append("</packagename>\n");
+            }
+            sb.append("            <packagename>").append(BASIS_PKG).append('.').append(eindeutig).append("</packagename>\n")
+              .append("          </packagenames>\n")
+              .append("        </wsdlOption>\n");
+        }
+
+        System.out.println(wsdls.size() + " WSDLs gefunden");
+        System.out.println("Gemeinsame Namespaces: " + shared);
+        return sb.toString();
+    }
+
+    // ---------- 3. In pom.xml einsetzen ----------
+    static void inPomEinsetzen(String xml) throws IOException {
+        String pom = new String(Files.readAllBytes(POM), StandardCharsets.UTF_8);
+        int b = pom.indexOf(BEGIN);
+        int e = pom.indexOf(END);
+        if (b < 0 || e < b) {
+            System.out.println("Marker nicht in pom.xml gefunden -> Inhalt von wsdlOptions.xml manuell einfuegen.");
+            return;
+        }
+        pom = pom.substring(0, b + BEGIN.length()) + "\n" + xml + "        " + pom.substring(e);
+        Files.write(POM, pom.getBytes(StandardCharsets.UTF_8));
+        System.out.println("pom.xml aktualisiert.");
+    }
+
+    // ---------- Hilfsmethoden ----------
+    static String dateiname(String zipPfad) {
+        String n = zipPfad.replace('\\', '/');
+        return n.substring(n.lastIndexOf('/') + 1);
+    }
+
+    static String pkgTeil(String s) {
+        String p = s.toLowerCase().replaceAll("[^a-z0-9_]", "_");
+        return (p.isEmpty() || Character.isDigit(p.charAt(0))) ? "_" + p : p;
+    }
+
+    static String targetNamespace(Path xsd) throws IOException {
+        Matcher m = TNS.matcher(new String(Files.readAllBytes(xsd), StandardCharsets.ISO_8859_1));
+        return m.find() ? m.group(1) : null;
+    }
+
+    static void loeschen(Path dir) throws IOException {
+        if (!Files.exists(dir)) return;
+        try (Stream<Path> s = Files.walk(dir)) {
+            for (Path p : s.sorted(Comparator.reverseOrder()).collect(Collectors.toList())) {
+                Files.delete(p);
+            }
+        }
+    }
+}
