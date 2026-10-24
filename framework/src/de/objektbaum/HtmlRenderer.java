@@ -498,22 +498,27 @@ public final class HtmlRenderer {
         if (hasKids) sb.append(" data-open=\"").append(open ? 1 : 0).append('"');
         if (isSel) sb.append(" class=\"sel\" aria-selected=\"true\"");
         if (!visible) sb.append(" hidden");
-        sb.append("><td class=\"tt-mark\">").append(isSel ? "✔" : "").append("</td>");
+        NodeStyle st = styler.apply(node);
+        String cellCss = isSel ? cssText(st) : cssText(st) + cssBackground(st);
+        if (st != null && st.tooltip() != null) sb.append(" title=\"").append(esc(st.tooltip())).append('"');
+        sb.append("><td class=\"tt-mark\"").append(styleAttr(isSel ? "" : cssBackground(st))).append(">")
+          .append(isSel ? "✔" : "").append("</td>");
         for (TreeColumn col : treeColumns) {
             String v = col.valueOf(node);
             sb.append("<td data-v=\"").append(esc(v)).append('"');
             if (col.kind() == TreeColumn.Kind.NAME) {
-                sb.append(" class=\"tt-name\" style=\"padding-left:").append(8 + depth * 18).append("px\">");
+                sb.append(" class=\"tt-name\" style=\"padding-left:").append(8 + depth * 18).append("px;")
+                  .append(cellCss).append("\">");
                 if (hasKids) {
                     sb.append("<button type=\"button\" class=\"tt-tog\" aria-label=\"")
                       .append(open ? "Zuklappen" : "Aufklappen").append("\">").append(open ? "−" : "+").append("</button>");
                 } else {
                     sb.append("<span class=\"tt-sp\"></span>");
                 }
-                sb.append("<a href=\"").append(href(node, layout)).append("\"><span class=\"ico\">")
-                  .append(node.type().icon()).append("</span>").append(esc(v)).append("</a>");
+                sb.append("<a href=\"").append(href(node, layout)).append("\"").append(styleAttr(cssText(st)))
+                  .append("><span class=\"ico\">").append(icon(node, st)).append("</span>").append(esc(v)).append("</a>");
             } else {
-                sb.append('>').append(esc(v));
+                sb.append(styleAttr(cellCss)).append('>').append(esc(v));
             }
             sb.append("</td>");
         }
@@ -569,8 +574,46 @@ public final class HtmlRenderer {
     }
 
     private String navLink(ObjectNode n, Layout layout, String cls) {
-        return "<a href=\"" + href(n, layout) + "\"" + cls + " title=\"" + esc(typeLabel(n.type())) + "\">"
-                + "<span class=\"ico\">" + n.type().icon() + "</span>" + esc(n.name()) + "</a>";
+        NodeStyle st = styler.apply(n);
+        String title = st != null && st.tooltip() != null ? st.tooltip() : typeLabel(n.type());
+        String css = cls.isEmpty() ? cssText(st) + cssBackground(st) : "";
+        return "<a href=\"" + href(n, layout) + "\"" + cls + styleAttr(css) + " title=\"" + esc(title) + "\">"
+                + "<span class=\"ico\">" + icon(n, st) + "</span>" + esc(n.name()) + "</a>";
+    }
+
+    // ----- Aussehen einzelner Objekte (NodeStyle) -----
+
+    private java.util.function.Function<ObjectNode, NodeStyle> styler = ObjectNode::style;
+
+    /** Regel für das Aussehen einzelner Objekte (Standard: nur {@link ObjectNode#style()}). */
+    public void styler(java.util.function.Function<ObjectNode, NodeStyle> rule) {
+        this.styler = rule == null ? ObjectNode::style : n -> {
+            try {
+                return rule.apply(n);
+            } catch (RuntimeException e) {
+                return null;
+            }
+        };
+    }
+
+    /** Farben sind geprüft (#rrggbb), daher ohne Maskierung im style-Attribut erlaubt. */
+    private static String cssText(NodeStyle st) {
+        if (st == null) return "";
+        return (st.color() != null ? "color:" + st.color() + ";" : "")
+                + (st.isBold() ? "font-weight:700;" : "")
+                + (st.isItalic() ? "font-style:italic;" : "");
+    }
+
+    private static String cssBackground(NodeStyle st) {
+        return st == null || st.background() == null ? "" : "background:" + st.background() + ";";
+    }
+
+    private static String styleAttr(String css) {
+        return css.isEmpty() ? "" : " style=\"" + css + "\"";
+    }
+
+    private static String icon(ObjectNode n, NodeStyle st) {
+        return st != null && st.icon() != null ? esc(st.icon()) : n.type().icon();
     }
 
     /** Info zu den Kindern eines Unterobjekts, ohne sie zu laden. */

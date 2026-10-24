@@ -24,6 +24,7 @@ import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.WindowConstants;
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
@@ -59,7 +60,9 @@ import java.util.function.Supplier;
  */
 public final class SwingViewer {
 
-    private final ObjectNode root;
+    private ObjectNode root;
+    /** Anwendung (Login, Suche, Listener, Aussehen je Objekt, Baum-Buttons) oder null beim einfachen Konstruktor. */
+    private final ObjectViewer app;
     private final Supplier<String> title;
     private final Supplier<String> configError;
     private final Supplier<Object> configStamp;
@@ -89,9 +92,15 @@ public final class SwingViewer {
     private volatile boolean systemDark;
     private final Map<ObjectNode, String> loadErrors = new IdentityHashMap<>();
     private final Set<ObjectNode> loading = Collections.newSetFromMap(new IdentityHashMap<>());
+    private LoginPanel loginPanel;
+    private SearchPanel searchPanel;
+    private final Map<String, String> searchValues = new java.util.LinkedHashMap<>();
+    private String lastUser;
+    /** Zählt Klicks, damit nur das Ergebnis des letzten Klicks angezeigt wird. */
+    private int clickSeq;
 
     public SwingViewer(ObjectNode root, String title, ViewRegistry views, List<TreeColumn> treeColumns) {
-        this(root, () -> title, views, () -> treeColumns, () -> null, () -> null, null);
+        this(null, root, () -> title, views, () -> treeColumns, () -> null, () -> null, null);
     }
 
     /**
@@ -99,13 +108,14 @@ public final class SwingViewer {
      * wie die Browser-Version. Änderungen an viewer.xml und swing.properties werden automatisch übernommen.
      */
     public SwingViewer(ObjectViewer viewer) {
-        this(viewer.root(), viewer::title, viewer.views(), viewer::treeColumns, viewer::configError,
+        this(viewer, viewer.root(), viewer::title, viewer.views(), viewer::treeColumns, viewer::configError,
                 viewer::configStamp, viewer.configDir() == null ? null : viewer.configDir().resolve("swing.properties"));
     }
 
-    private SwingViewer(ObjectNode root, Supplier<String> title, ViewRegistry views,
+    private SwingViewer(ObjectViewer app, ObjectNode root, Supplier<String> title, ViewRegistry views,
                         Supplier<List<TreeColumn>> treeColumns, Supplier<String> configError,
                         Supplier<Object> configStamp, Path styleFile) {
+        this.app = app;
         this.root = root;
         this.title = title;
         this.configError = configError;
@@ -115,15 +125,166 @@ public final class SwingViewer {
         this.views = views == null ? new ViewRegistry() : views;
         this.style = styleFile == null ? null : new SwingStyle(styleFile);
         this.layout = Layout.fromCode(Splits.PREFS.get("layout", "v"));
-        this.tableMode = "table".equals(Splits.PREFS.get("mode", "nav"));
+        // mit Suchmaske wie im Fachsystem: Baumtabelle als Standard
+        this.tableMode = "table".equals(Splits.PREFS.get("mode", app != null && app.search() != null ? "table" : "nav"));
 
         if (style != null && style.current().scheme() == SwingStyle.Scheme.SYSTEM) {
             systemDark = SwingStyle.systemPrefersDark();
         }
         applyStyle();
         buildChrome(null, null);
+        if (app != null && app.login() != null) {
+            showLogin();
+        } else {
+            relayout();
+            display(root, null);
+        }
+    }
+
+    // ================================================================= Anmeldung
+
+    private void showLogin() {
+        loginPanel = new LoginPanel(title.get(), lastUser, app.login(), this::loggedIn);
+        rootPanel.removeAll();
+        rootPanel.add(loginPanel.component());
+        rootPanel.revalidate();
+        rootPanel.repaint();
+        SwingUtilities.invokeLater(loginPanel::focus);
+        if (frame != null) frame.setTitle("Anmelden – " + title.get());
+    }
+
+    private void loggedIn(String user) {
+        lastUser = user;
+        app.user(user);
+        loginPanel = null;
         relayout();
-        show(root);
+        display(root, null);
+        if (searchPanel != null) SwingUtilities.invokeLater(searchPanel::focus);
+    }
+
+    private void logout() {
+        app.user(null);
+        if (app.search() != null) {
+            // Daten des Vorgangs nicht für den nächsten Benutzer stehen lassen
+            setRoot(ObjectViewer.placeholderRoot(), false);
+            searchValues.clear();
+            searchPanel = newSearchPanel();
+        }
+        draft = null;
+        invalid = null;
+        message = null;
+        showLogin();
+    }
+
+    // ================================================================= Suche
+
+    private SearchPanel newSearchPanel() {
+        return app == null || app.search() == null ? null
+                : new SearchPanel(app.searchFields(), searchValues, this::readRoot);
+    }
+
+    /** „Vorgang lesen“: SearchHandler im Hintergrund, Ergebnis wird die neue Wurzel. */
+    private void readRoot(Map<String, String> criteria) {
+        if (criteria.isEmpty()) {
+            message = new HtmlRenderer.Message("Bitte " + String.join(" und/oder ", app.searchFields()) + " eingeben.", true);
+            renderHeader();
+            searchPanel.focus();
+            return;
+        }
+        searchPanel.busy(true);
+        rootPanel.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+        new SwingWorker<ObjectNode, Void>() {
+            @Override
+            protected ObjectNode doInBackground() throws Exception {
+                return app.search().search(Map.copyOf(criteria));
+            }
+
+            @Override
+            protected void done() {
+                rootPanel.setCursor(Cursor.getDefaultCursor());
+                if (searchPanel != null) searchPanel.busy(false);
+                try {
+                    ObjectNode found = get();
+                    if (found == null) {
+                        message = new HtmlRenderer.Message("Nichts gefunden zu " + describe(criteria) + ".", true);
+                        renderHeader();
+                        return;
+                    }
+                    setRoot(found, true);
+                } catch (InterruptedException | ExecutionException e) {
+                    Throwable cause = e.getCause() != null ? e.getCause() : e;
+                    message = new HtmlRenderer.Message("Vorgang lesen fehlgeschlagen: " + cause.getMessage(), true);
+                    renderHeader();
+                }
+            }
+        }.execute();
+    }
+
+    private static String describe(Map<String, String> criteria) {
+        StringBuilder sb = new StringBuilder();
+        criteria.forEach((k, v) -> sb.append(sb.length() == 0 ? "" : ", ").append(k).append(" ").append(v));
+        return sb.toString();
+    }
+
+    /** Neue Wurzel (gelesener Vorgang): Navigation und Baumtabelle neu, Wurzel anzeigen (ohne Klick-Listener). */
+    private void setRoot(ObjectNode newRoot, boolean showIt) {
+        if (searchPanel != null) {
+            searchValues.clear();
+            searchValues.putAll(searchPanel.allValues());
+        }
+        root = newRoot;
+        if (app != null) app.root(newRoot);
+        loadErrors.clear();
+        draft = null;
+        invalid = null;
+        TreeTablePanel.State old = treeTable.state();
+        buildChrome(null, new TreeTablePanel.State(Collections.newSetFromMap(new IdentityHashMap<>()),
+                old.filters(), old.sortHeader(), old.dir(), old.widths(), null));
+        if (showIt) {
+            relayout();
+            display(root, ObjectViewer.isPlaceholder(root) ? null
+                    : new HtmlRenderer.Message("Gelesen: " + root.name(), false));
+        }
+    }
+
+    // ================================================================= Klicks
+
+    /** Klick des Benutzers auf ein Objekt: erst den Listener der Anwendung (im Hintergrund), dann anzeigen. */
+    private void userOpen(ObjectNode node) {
+        if (app == null || app.clickListener() == null || ObjectViewer.isPlaceholder(node)) {
+            draft = null;
+            invalid = null;
+            display(node, null);
+            return;
+        }
+        int seq = ++clickSeq;
+        rootPanel.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+        new SwingWorker<String, Void>() {
+            @Override
+            protected String doInBackground() throws Exception {
+                return app.clickListener().clicked(node);
+            }
+
+            @Override
+            protected void done() {
+                if (seq != clickSeq) return;   // inzwischen woanders hingeklickt
+                rootPanel.setCursor(Cursor.getDefaultCursor());
+                HtmlRenderer.Message msg;
+                try {
+                    String text = get();
+                    msg = text == null || text.isBlank() ? null : new HtmlRenderer.Message(text, false);
+                } catch (InterruptedException | ExecutionException e) {
+                    Throwable cause = e.getCause() != null ? e.getCause() : e;
+                    msg = new HtmlRenderer.Message("Fehler beim Laden von „" + node.name() + "“: " + cause.getMessage(), true);
+                }
+                // Listener kann Kinder geändert haben: Navigation und Baumtabelle nachziehen
+                nav.refresh(node);
+                treeTable.refresh();
+                draft = null;
+                invalid = null;
+                display(node, msg);
+            }
+        }.execute();
     }
 
     /** Öffnet das Fenster. Muss im Event-Thread aufgerufen werden ({@link SwingUtilities#invokeLater}). */
@@ -136,6 +297,7 @@ public final class SwingViewer {
         frame.setMinimumSize(new Dimension(900, 600));
         frame.setLocationRelativeTo(null);
         updateTitle();
+        if (loginPanel != null) frame.setTitle("Anmelden – " + title.get());
         frame.setVisible(true);
         // viewer.xml und swing.properties beobachten: geändert -> neu aufbauen
         new javax.swing.Timer(1000, e -> checkForChanges()).start();
@@ -159,11 +321,9 @@ public final class SwingViewer {
         return rootPanel;
     }
 
-    /** Zeigt ein Objekt an (wie ein Klick in Navigation oder Baumtabelle). */
+    /** Zeigt ein Objekt an wie ein Klick in Navigation oder Baumtabelle (inkl. Klick-Listener). */
     public void show(ObjectNode node) {
-        draft = null;
-        invalid = null;
-        show(node, null);
+        userOpen(node);
     }
 
     // ================================================================= Live-Änderungen
@@ -217,13 +377,26 @@ public final class SwingViewer {
         applyStyle();
         if (frame != null) SwingUtilities.updateComponentTreeUI(frame);
         buildChrome(nav.expandedNodes(), treeTable.state());
+        if (loginPanel != null) {
+            String typed = loginPanel.userText();
+            String keep = lastUser;
+            lastUser = typed;
+            showLogin();
+            lastUser = keep;
+            return;
+        }
         relayout();
-        show(current, message);
+        display(current, message);
     }
 
     /** Navigation und Baumtabelle (neu) bauen; Zustand der alten wird übernommen. */
     private void buildChrome(List<ObjectNode> expanded, TreeTablePanel.State tableState) {
-        nav = new NavTree(root, this::show);
+        if (searchPanel != null) {
+            searchValues.clear();
+            searchValues.putAll(searchPanel.allValues());
+        }
+        searchPanel = newSearchPanel();
+        nav = new NavTree(root, this::userOpen, this::styleOf);
         if (expanded != null) nav.expand(expanded);
         navComponent = nav.component(title.get());
         treeTable = newTreeTable(tableState);
@@ -235,7 +408,13 @@ public final class SwingViewer {
     }
 
     private TreeTablePanel newTreeTable(TreeTablePanel.State state) {
-        return new TreeTablePanel(root, effectiveColumns(), this::show, n -> nav.refresh(n), state);
+        TreeTablePanel t = new TreeTablePanel(root, effectiveColumns(), this::userOpen, n -> nav.refresh(n), state);
+        t.styler(this::styleOf);
+        return t;
+    }
+
+    private de.objektbaum.NodeStyle styleOf(ObjectNode n) {
+        return app == null ? n.style() : app.styleOf(n);
     }
 
     private List<TreeColumn> effectiveColumns() {
@@ -245,8 +424,9 @@ public final class SwingViewer {
 
     /** Aktuelle Ansicht neu aufbauen, ohne dass ungespeicherte Eingaben verloren gehen. */
     private void rerender() {
+        if (loginPanel != null) return;
         rememberInput();
-        show(current, message);
+        display(current, message);
     }
 
     private void rememberInput() {
@@ -260,9 +440,17 @@ public final class SwingViewer {
 
     private void relayout() {
         rootPanel.removeAll();
+        if (loginPanel != null) return;
         JPanel right = new JPanel(new BorderLayout());
         right.setBackground(Ui.BG);
-        right.add(header, BorderLayout.NORTH);
+        if (searchPanel != null) {
+            JPanel top = new JPanel(new BorderLayout());
+            top.add(searchPanel.component(), BorderLayout.NORTH);
+            top.add(header, BorderLayout.CENTER);
+            right.add(top, BorderLayout.NORTH);
+        } else {
+            right.add(header, BorderLayout.NORTH);
+        }
         right.add(content, BorderLayout.CENTER);
         if (tableMode) {
             rootPanel.add(right);
@@ -282,7 +470,9 @@ public final class SwingViewer {
         rootPanel.repaint();
     }
 
-    private void show(ObjectNode node, HtmlRenderer.Message msg) {
+    /** Zeigt ein Objekt an (ohne Klick-Listener). */
+    private void display(ObjectNode node, HtmlRenderer.Message msg) {
+        if (loginPanel != null) return;
         current = node;
         message = msg;
         if (!node.isLoaded() && !loadErrors.containsKey(node)) {
@@ -296,7 +486,7 @@ public final class SwingViewer {
     }
 
     private void updateTitle() {
-        if (frame != null && current != null) frame.setTitle(current.name() + " – " + title.get());
+        if (frame != null && current != null && loginPanel == null) frame.setTitle(current.name() + " – " + title.get());
     }
 
     // ================================================================= Header
@@ -328,7 +518,7 @@ public final class SwingViewer {
             if (p == node) {
                 crumbs.add(Ui.label(p.name(), Font.PLAIN, 13, Ui.MUTED));
             } else {
-                JButton l = Ui.link(p.name(), () -> show(p));
+                JButton l = Ui.link(p.name(), () -> userOpen(p));
                 l.setFont(Ui.font(Font.PLAIN, 13));
                 crumbs.add(l);
             }
@@ -338,13 +528,34 @@ public final class SwingViewer {
         titleRow.setOpaque(false);
         JPanel titleLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         titleLeft.setOpaque(false);
-        JLabel h1 = Ui.label(node.name(), Font.BOLD, 24, Ui.FG);
+        de.objektbaum.NodeStyle st = styleOf(node);
+        Color own = st == null ? null : Ui.hex(st.color());
+        JLabel h1 = Ui.label(node.name(), Ui.fontStyle(st, Font.BOLD) | Font.BOLD, 24, own != null ? own : Ui.FG);
+        if (st != null && st.icon() != null) {
+            h1.setIcon(Ui.nodeIcon(node, st, Ui.px(24)));
+            h1.setIconTextGap(8);
+        }
+        if (st != null && st.tooltip() != null) h1.setToolTipText(st.tooltip());
         titleLeft.add(h1);
-        titleLeft.add(Box.createHorizontalStrut(10));
-        titleLeft.add(Ui.badge(node.type()));
+        if (!ObjectViewer.isPlaceholder(node)) {
+            titleLeft.add(Box.createHorizontalStrut(10));
+            titleLeft.add(Ui.badge(node.type()));
+        }
 
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         actions.setOpaque(false);
+        JPanel crumbRow = new JPanel(new BorderLayout(16, 0));
+        crumbRow.setOpaque(false);
+        crumbRow.add(crumbs, BorderLayout.CENTER);
+        if (app != null && app.user() != null) {
+            JPanel who = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+            who.setOpaque(false);
+            who.add(Ui.label("Angemeldet: " + app.user(), Font.PLAIN, 13, Ui.MUTED));
+            JButton out = Ui.link("Abmelden", this::logout);
+            out.setFont(Ui.font(Font.PLAIN, 13));
+            who.add(out);
+            crumbRow.add(who, BorderLayout.EAST);
+        }
         if (node.isLazy()) {
             JButton reload = Ui.button(Ui.sym("↻ ", "") + "Neu laden", false);
             reload.setFont(Ui.font(Font.PLAIN, 13));
@@ -368,12 +579,13 @@ public final class SwingViewer {
 
         NodeView view = views.resolve(node);
         StringBuilder meta = new StringBuilder();
-        meta.append(node.fields().size()).append(" Felder · ")
+        if (ObjectViewer.isPlaceholder(node)) meta.append("Noch kein Vorgang gelesen · ");
+        else meta.append(node.fields().size()).append(" Felder · ")
             .append(node.isLoaded() ? node.loadedChildren().size() + " Unterobjekte" : "Unterobjekte nicht geladen");
         if (node.isLazy()) meta.append(" · lazy");
         if (view != null) meta.append(" · Ansicht: ").append(view.name());
 
-        for (JComponent c : List.of(crumbs, titleRow)) {
+        for (JComponent c : List.of(crumbRow, titleRow)) {
             c.setAlignmentX(Component.LEFT_ALIGNMENT);
             header.add(c);
             header.add(Box.createVerticalStrut(4));
@@ -428,12 +640,74 @@ public final class SwingViewer {
             ttWrap.setBackground(Ui.BG);
             ttWrap.setBorder(Ui.pad(20, 28, 10, 28));
             ttWrap.add(tt);
-            content.add(s.split(JSplitPane.VERTICAL_SPLIT, ttWrap, main, 0.36));
+            JComponent buttons = treeButtons();
+            if (buttons != null) {
+                buttons.setBorder(Ui.pad(8, 0, 0, 0));
+                ttWrap.add(buttons, BorderLayout.SOUTH);
+            }
+            // mit Suchmaske ist die Baumtabelle die Hauptnavigation (wie im Fachsystem): mehr Platz
+            double share = app != null && app.search() != null ? 0.5 : 0.36;
+            content.add(s.split(JSplitPane.VERTICAL_SPLIT, ttWrap, main, share));
         } else {
+            JComponent buttons = treeButtons();
+            if (buttons != null) {
+                buttons.setBorder(Ui.pad(12, 28, 0, 28));
+                content.add(buttons, BorderLayout.NORTH);
+            }
             content.add(main);
         }
         content.revalidate();
         content.repaint();
+    }
+
+    /** Buttons unter der Baumtabelle (aus viewer.xml oder Code), wirken auf das ausgewählte Objekt. */
+    private JComponent treeButtons() {
+        List<ObjectViewer.TreeButton> list = app == null ? List.of() : app.treeButtons();
+        if (list.isEmpty() || current == null) return null;
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        row.setOpaque(false);
+        boolean none = ObjectViewer.isPlaceholder(current);
+        for (ObjectViewer.TreeButton b : list) {
+            JButton jb = Ui.button(b.label(), false);
+            jb.setFont(Ui.font(Font.PLAIN, 13));
+            jb.setBorder(Ui.pad(5, 12, 5, 12));
+            jb.setEnabled(!none);
+            jb.setToolTipText(none ? "Erst einen Vorgang lesen" : b.label() + ": " + current.name());
+            jb.addActionListener(e -> runTreeButton(b, current));
+            row.add(jb);
+        }
+        return row;
+    }
+
+    private void runTreeButton(ObjectViewer.TreeButton b, ObjectNode node) {
+        rootPanel.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+        Map<String, List<String>> values = frames == null ? Map.of() : frames.formValues();
+        ObjectNode parentBefore = node.parent();
+        new SwingWorker<String, Void>() {
+            @Override
+            protected String doInBackground() throws Exception {
+                return b.action().run(node, values);
+            }
+
+            @Override
+            protected void done() {
+                rootPanel.setCursor(Cursor.getDefaultCursor());
+                HtmlRenderer.Message msg;
+                try {
+                    String text = get();
+                    msg = text == null || text.isBlank() ? null : new HtmlRenderer.Message(text, false);
+                } catch (InterruptedException | ExecutionException e) {
+                    Throwable cause = e.getCause() != null ? e.getCause() : e;
+                    msg = new HtmlRenderer.Message(b.label() + " fehlgeschlagen: " + cause.getMessage(), true);
+                }
+                // Aktion kann den Baum geändert haben (z. B. Angebot gelöscht -> Elternobjekt zeigen)
+                boolean removed = node != root && node.parent() == null;
+                if (parentBefore != null) nav.refresh(parentBefore);
+                if (!removed) nav.refresh(node);
+                treeTable.refresh();
+                if (current == node) display(removed ? (parentBefore != null ? parentBefore : root) : node, msg);
+            }
+        }.execute();
     }
 
     private JComponent mainArea(ObjectNode node) {
@@ -441,6 +715,15 @@ public final class SwingViewer {
         JPanel main = new JPanel(new BorderLayout());
         main.setBackground(Ui.BG);
         main.setBorder(Ui.pad(tableMode ? 10 : 24, 28, 20, 28));
+        if (ObjectViewer.isPlaceholder(node)) {
+            frames = null;
+            JLabel hint = Ui.hint(app != null && app.search() != null
+                    ? "Oben " + String.join(" und/oder ", app.searchFields()) + " eingeben und „Vorgang lesen“ klicken."
+                    : "Keine Daten.");
+            hint.setVerticalAlignment(javax.swing.SwingConstants.TOP);
+            main.add(hint);
+            return main;
+        }
 
         if (view != null) {
             frames = new FramesPanel(node, view, layout, this::submit, draft, invalid);
@@ -515,7 +798,7 @@ public final class SwingViewer {
             e.add(l);
             e.add(Ui.link("Erneut versuchen", () -> {
                 loadErrors.remove(node);
-                show(node);
+                userOpen(node);
             }));
             e.setAlignmentX(Component.LEFT_ALIGNMENT);
             return e;
@@ -528,7 +811,7 @@ public final class SwingViewer {
             return Ui.hint("Keine Unterobjekte.");
         }
         if (layout == Layout.HORIZONTAL) {
-            JComponent t = Ui.childrenTable(kids, this::show);
+            JComponent t = Ui.childrenTable(kids, this::userOpen);
             JScrollPane sp = new JScrollPane(t);
             sp.setBorder(BorderFactory.createLineBorder(Ui.LINE));
             sp.getViewport().setBackground(Ui.PANEL);
@@ -552,7 +835,7 @@ public final class SwingViewer {
     private JComponent card(ObjectNode c) {
         JPanel head = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         head.setOpaque(false);
-        JButton link = Ui.link(c.name(), () -> show(c));
+        JButton link = Ui.link(c.name(), () -> userOpen(c));
         link.setFont(Ui.font(Font.BOLD, 16));
         head.add(link);
         head.add(Box.createHorizontalStrut(8));
@@ -608,7 +891,7 @@ public final class SwingViewer {
                     draft = form;
                     invalid = result.invalid();
                 }
-                show(node, result.message());
+                display(node, result.message());
             }
         }.execute();
     }
@@ -644,6 +927,6 @@ public final class SwingViewer {
         nav.refresh(node);
         treeTable.forgetExpansion(node);
         rememberInput();
-        show(node, null);
+        display(node, null);
     }
 }

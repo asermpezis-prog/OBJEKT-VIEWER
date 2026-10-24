@@ -36,7 +36,7 @@ import java.util.Objects;
  */
 public final class ObjectViewer {
 
-    private final ObjectNode root;
+    private volatile ObjectNode root;
     private final String codeTitle;
     private final List<TreeColumn> codeTreeColumns;
     private final ViewRegistry views;
@@ -45,9 +45,33 @@ public final class ObjectViewer {
     private final Templates templates;
     private final HtmlRenderer renderer;
     private final Path configDir;
+    private final LoginHandler login;
+    private final SearchHandler search;
+    private final List<String> searchFields;
+    private final NodeClickListener clickListener;
+    private final java.util.function.Function<ObjectNode, NodeStyle> styler;
+    private final List<TreeButton> codeTreeButtons;
+    private volatile String user;
+
+    /** Button unter der Baumtabelle: wirkt auf das ausgewählte Objekt. */
+    public record TreeButton(String label, Button.Action action) {
+        public TreeButton {
+            Objects.requireNonNull(label, "label");
+            Objects.requireNonNull(action, "action");
+        }
+    }
 
     private ObjectViewer(Builder b) {
-        this.root = Objects.requireNonNull(b.root, "root: Wurzelobjekt fehlt");
+        if (b.root == null && b.search == null) {
+            throw new NullPointerException("root: Wurzelobjekt fehlt (oder .search(...) für eine Suchmaske angeben)");
+        }
+        this.root = b.root != null ? b.root : placeholderRoot();
+        this.login = b.login;
+        this.search = b.search;
+        this.searchFields = List.copyOf(b.searchFields);
+        this.clickListener = b.clickListener;
+        this.styler = b.styler;
+        this.codeTreeButtons = List.copyOf(b.treeButtons);
         this.codeTitle = b.title;
         this.codeTreeColumns = b.treeColumns;
         this.views = b.views;
@@ -63,6 +87,7 @@ public final class ObjectViewer {
         }
         views.configured(() -> config == null ? java.util.Map.of() : config.current().views());
         this.renderer = new HtmlRenderer(root, this::title, views, this::treeColumns, templates, this::configError);
+        this.renderer.styler(this::styleOf);
     }
 
     public static Builder builder() {
@@ -95,13 +120,78 @@ public final class ObjectViewer {
         return java.util.List.of(config.current(), String.valueOf(config.error()));
     }
 
+    /** Platzhalter-Wurzel, solange noch kein Vorgang gelesen wurde. */
+    public static ObjectNode placeholderRoot() {
+        return new ObjectNode("Kein Vorgang geladen", ObjectType.GRUPPE).field("_platzhalter", Boolean.TRUE);
+    }
+
+    /** true für die Platzhalter-Wurzel aus {@link #placeholderRoot()}. */
+    public static boolean isPlaceholder(ObjectNode node) {
+        return node != null && Boolean.TRUE.equals(node.fields().get("_platzhalter"));
+    }
+
+    /** Anmeldung oder null (dann keine Anmeldemaske). */
+    public LoginHandler login() {
+        return login;
+    }
+
+    /** Suche (Vorgang lesen) oder null (dann keine Suchmaske). */
+    public SearchHandler search() {
+        return search;
+    }
+
+    /** Felder der Suchmaske, z. B. VorgangsId, VorgangsNummer. */
+    public List<String> searchFields() {
+        return searchFields;
+    }
+
+    /** Listener für Klicks auf Objekte oder null. */
+    public NodeClickListener clickListener() {
+        return clickListener;
+    }
+
+    /** Angemeldeter Benutzer oder null. */
+    public String user() {
+        return user;
+    }
+
+    /** Wird von der Anmeldemaske gesetzt (null = abgemeldet). */
+    public void user(String name) {
+        this.user = name;
+    }
+
+    /** Aussehen eines Objekts: eigenes ({@link ObjectNode#style()}), sonst Regel aus dem Builder, sonst null. */
+    public NodeStyle styleOf(ObjectNode node) {
+        NodeStyle s = node.style();
+        if (s == null && styler != null) {
+            try {
+                s = styler.apply(node);
+            } catch (RuntimeException e) {
+                s = null;
+            }
+        }
+        return s;
+    }
+
+    /** Buttons unter der Baumtabelle: aus viewer.xml, sonst aus dem Code. */
+    public List<TreeButton> treeButtons() {
+        List<TreeButton> b = config == null ? null : config.current().treeButtons();
+        return b != null && !b.isEmpty() ? b : codeTreeButtons;
+    }
+
     /** Konfigurationsordner (absolut) oder null. */
     public Path configDir() {
         return configDir;
     }
 
+    /** Die aktuelle Wurzel (mit Suchmaske: der zuletzt gelesene Vorgang bzw. der Platzhalter). */
     public ObjectNode root() {
         return root;
+    }
+
+    /** Setzt die aktuelle Wurzel; die Swing-Version ruft das nach „Vorgang lesen“ und beim Abmelden auf. */
+    public void root(ObjectNode newRoot) {
+        this.root = Objects.requireNonNull(newRoot, "root");
     }
 
     public ViewRegistry views() {
@@ -147,8 +237,54 @@ public final class ObjectViewer {
         private final ViewRegistry views = new ViewRegistry();
         private final Bindings bindings = new Bindings();
         private List<TreeColumn> treeColumns = HtmlRenderer.DEFAULT_TREE_COLUMNS;
+        private LoginHandler login;
+        private SearchHandler search;
+        private List<String> searchFields = List.of("VorgangsId", "VorgangsNummer");
+        private NodeClickListener clickListener;
+        private java.util.function.Function<ObjectNode, NodeStyle> styler;
+        private final List<TreeButton> treeButtons = new java.util.ArrayList<>();
 
         private Builder() {
+        }
+
+        /** Anmeldemaske (Benutzer + Passwort) vor dem Hauptfenster; die Prüfung übernimmt der Handler. */
+        public Builder login(LoginHandler handler) {
+            this.login = handler;
+            return this;
+        }
+
+        /**
+         * Suchmaske „Vorgang suchen“ mit Button „Vorgang lesen“. Das Ergebnis wird zur Wurzel des Baums;
+         * {@link #root} ist dann nicht nötig.
+         */
+        public Builder search(SearchHandler handler) {
+            this.search = handler;
+            return this;
+        }
+
+        /** Felder der Suchmaske (Standard: VorgangsId, VorgangsNummer). */
+        public Builder searchFields(String... names) {
+            if (names.length == 0) throw new IllegalArgumentException("searchFields: mindestens ein Feld");
+            this.searchFields = List.of(names);
+            return this;
+        }
+
+        /** Wird bei jedem Klick auf ein Objekt aufgerufen; darf Kinder hinzufügen (Baum baut sich auf). */
+        public Builder onNodeClick(NodeClickListener listener) {
+            this.clickListener = listener;
+            return this;
+        }
+
+        /** Regel für das Aussehen einzelner Objekte; null-Ergebnis = Standard. */
+        public Builder nodeStyle(java.util.function.Function<ObjectNode, NodeStyle> rule) {
+            this.styler = rule;
+            return this;
+        }
+
+        /** Button unter der Baumtabelle, wirkt auf das ausgewählte Objekt (auch in viewer.xml: &lt;treetable&gt;&lt;button&gt;). */
+        public Builder treeButton(String label, Button.Action action) {
+            treeButtons.add(new TreeButton(label, action));
+            return this;
         }
 
         /** Das oberste Objekt des Baums. */

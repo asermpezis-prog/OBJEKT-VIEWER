@@ -10,11 +10,16 @@ import java.util.Map;
  * @param types       Typdefinitionen: Kennung, Anzeigetext, Icon
  * @param treeColumns Spalten der Baumtabelle oder null (dann gelten die aus dem Code)
  * @param views       Ansichten je Objekttyp
+ * @param treeButtons Buttons unter der Baumtabelle (leer = die aus dem Code)
  */
 public record ViewerConfig(String title, List<TypeDef> types, List<TreeColumn> treeColumns,
-                           Map<ObjectType, NodeView> views) {
+                           Map<ObjectType, NodeView> views, List<ObjectViewer.TreeButton> treeButtons) {
 
-    public static final ViewerConfig EMPTY = new ViewerConfig(null, List.of(), null, Map.of());
+    public static final ViewerConfig EMPTY = new ViewerConfig(null, List.of(), null, Map.of(), List.of());
+
+    public ViewerConfig(String title, List<TypeDef> types, List<TreeColumn> treeColumns, Map<ObjectType, NodeView> views) {
+        this(title, types, treeColumns, views, List.of());
+    }
 
     /** Ein Objekttyp aus der Konfiguration. */
     public record TypeDef(String id, String label, String icon) {
@@ -24,5 +29,6 @@ public record ViewerConfig(String title, List<TypeDef> types, List<TreeColumn> t
         types = types == null ? List.of() : List.copyOf(types);
         treeColumns = treeColumns == null ? null : List.copyOf(treeColumns);
         views = views == null ? Map.of() : Map.copyOf(views);
+        treeButtons = treeButtons == null ? List.of() : List.copyOf(treeButtons);
     }
 }

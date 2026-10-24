@@ -57,6 +57,7 @@ public final class XmlConfigReader {
         String title = root.attrs.get("title");
         List<ViewerConfig.TypeDef> types = new ArrayList<>();
         List<TreeColumn> treeColumns = null;
+        List<ObjectViewer.TreeButton> treeButtons = new ArrayList<>();
         Map<ObjectType, NodeView> views = new LinkedHashMap<>();
         Set<String> seen = new LinkedHashSet<>();
 
@@ -77,7 +78,12 @@ public final class XmlConfigReader {
                     allowed(section);
                     treeColumns = new ArrayList<>();
                     for (Node c : section.children) {
-                        expect(c, "column", "In <treetable> sind nur <column> erlaubt");
+                        if (c.name.equals("button")) {
+                            Button b = (Button) element(c);
+                            treeButtons.add(new ObjectViewer.TreeButton(b.label(), b.action()));
+                            continue;
+                        }
+                        expect(c, "column", "In <treetable> sind nur <column> und <button> erlaubt");
                         treeColumns.add(treeColumn(c));
                     }
                     if (treeColumns.stream().noneMatch(c -> c.kind() == TreeColumn.Kind.NAME)) {
@@ -101,7 +107,7 @@ public final class XmlConfigReader {
                         + ">. Erlaubt in <objektviewer>: <types>, <treetable>, <views>");
             }
         }
-        return new ViewerConfig(title, types, treeColumns, views);
+        return new ViewerConfig(title, types, treeColumns, views, treeButtons);
     }
 
     // ------------------------------------------------------------------ Teile

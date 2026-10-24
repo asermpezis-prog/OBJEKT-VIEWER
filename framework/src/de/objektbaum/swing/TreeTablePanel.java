@@ -71,6 +71,8 @@ final class TreeTablePanel {
     private final Consumer<ObjectNode> open;
     /** Wird aufgerufen, wenn ein Knoten hier nachgeladen wurde (damit die Navigation nachzieht). */
     private final Consumer<ObjectNode> loaded;
+    /** Aussehen einzelner Objekte (NodeStyle) oder null. */
+    private java.util.function.Function<ObjectNode, de.objektbaum.NodeStyle> styler = n -> null;
 
     private final Set<ObjectNode> expanded = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<ObjectNode> loading = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -140,7 +142,9 @@ final class TreeTablePanel {
                 int r = rowAtPoint(e.getPoint());
                 if (r < 0) return null;
                 ObjectNode n = rows.get(r).node();
-                return failed.contains(n) ? "Laden fehlgeschlagen – erneut auf + klicken" : null;
+                if (failed.contains(n)) return "Laden fehlgeschlagen – erneut auf + klicken";
+                de.objektbaum.NodeStyle st = styler.apply(n);
+                return st == null ? null : st.tooltip();
             }
         };
         table.setRowHeight(Ui.px(32));
@@ -221,6 +225,12 @@ final class TreeTablePanel {
         return new State(ex, f, sortCol < 0 ? null : columns.get(sortCol).header(), dir, w, selected);
     }
 
+    /** Regel für das Aussehen einzelner Objekte. */
+    void styler(java.util.function.Function<ObjectNode, de.objektbaum.NodeStyle> s) {
+        this.styler = s == null ? n -> null : s;
+        table.repaint();
+    }
+
     /** Die Spalten, mit denen diese Baumtabelle gebaut wurde. */
     List<TreeColumn> columns() {
         return columns;
@@ -239,8 +249,9 @@ final class TreeTablePanel {
         rebuild();
         for (int i = 0; i < rows.size(); i++) {
             if (rows.get(i).node() == node) {
-                Rectangle r = table.getCellRect(i, 0, true);
-                r.height = Math.max(r.height, 160); // etwas Umgebung mit einblenden
+                // etwas Umgebung mit einblenden: zwei Zeilen darüber (Eltern), drei darunter (Kinder)
+                Rectangle r = table.getCellRect(Math.max(0, i - 2), 0, true);
+                r = r.union(table.getCellRect(Math.min(rows.size() - 1, i + 3), 0, true));
                 table.scrollRectToVisible(r);
                 break;
             }
@@ -539,21 +550,25 @@ final class TreeTablePanel {
             nameCell = c == nameColumn();
             markCell = c == 0;
             boolean isSel = n == selected;
-            setBackground(isSel ? Ui.SEL : r % 2 == 1 ? Ui.ZEBRA : Ui.PANEL);
-            setForeground(Ui.FG);
+            de.objektbaum.NodeStyle st = styler.apply(n);
+            Color ownBg = st == null ? null : Ui.hex(st.background());
+            Color ownFg = st == null ? null : Ui.hex(st.color());
+            setBackground(isSel ? Ui.SEL : ownBg != null ? ownBg : r % 2 == 1 ? Ui.ZEBRA : Ui.PANEL);
+            setForeground(ownFg != null ? ownFg : Ui.FG);
+            setToolTipText(st == null ? null : st.tooltip());
             setIcon(null);
             if (c == 0) {
                 setFont(Ui.font(Font.BOLD, 14));
                 setHorizontalAlignment(CENTER);
                 setBorder(null);
             } else if (nameCell) {
-                setFont(Ui.font(Font.BOLD, 14));
+                setFont(Ui.font(Ui.fontStyle(st, Font.BOLD), 14));
                 setHorizontalAlignment(LEFT);
-                setIcon(Ui.typeIcon(n.type(), 16));
+                setIcon(Ui.nodeIcon(n, st, 16));
                 setIconTextGap(5);
                 setBorder(Ui.pad(0, 8 + row.depth() * INDENT + TOGGLE + 6, 0, 8));
             } else {
-                setFont(Ui.font(Font.PLAIN, 14));
+                setFont(Ui.font(Ui.fontStyle(st, Font.PLAIN), 14));
                 setHorizontalAlignment(LEFT);
                 setBorder(Ui.pad(0, 10, 0, 10));
             }

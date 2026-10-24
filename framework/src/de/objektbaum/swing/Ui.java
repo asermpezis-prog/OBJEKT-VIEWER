@@ -358,6 +358,34 @@ final class Ui {
         return createIcon(t, size);
     }
 
+    /** Farbe aus #rrggbb (aus {@link de.objektbaum.NodeStyle}); null bleibt null. */
+    static Color hex(String s) {
+        return s == null ? null : new Color(Integer.parseInt(s.substring(1), 16));
+    }
+
+    /** Icon eines Objekts: eigenes aus dem NodeStyle, sonst das seines Typs. */
+    static Icon nodeIcon(ObjectNode n, de.objektbaum.NodeStyle s, int size) {
+        if (s == null || s.icon() == null) return typeIcon(n.type(), size);
+        return ICONS.computeIfAbsent("style\u0000" + s.icon() + "\u0000" + size, k -> textIcon(s.icon(), size));
+    }
+
+    /** Ein Zeichen/Emoji als Icon; nimmt die erste Schrift, die es darstellen kann. */
+    private static Icon textIcon(String text, int size) {
+        for (String family : List.of("Noto Emoji", "Segoe UI Emoji", "Apple Color Emoji", "Segoe UI Symbol", "Noto Color Emoji", FONT)) {
+            Font f = new Font(family, Font.PLAIN, size - 2);
+            if (f.getFamily().equals(family) && f.canDisplayUpTo(text) == -1) {
+                return new TextIcon(text, f, size);
+            }
+        }
+        return new TextIcon(text.substring(0, Math.min(text.length(), 2)), new Font(FONT, Font.BOLD, size - 4), size);
+    }
+
+    /** Schriftstil aus dem NodeStyle; base = Stil ohne Angabe. */
+    static int fontStyle(de.objektbaum.NodeStyle s, int base) {
+        if (s == null) return base;
+        return (s.isBold() ? Font.BOLD : base & Font.BOLD) | (s.isItalic() ? Font.ITALIC : base & Font.ITALIC);
+    }
+
     private static Icon createIcon(ObjectType t, int size) {
         String emoji = t.icon();
         for (String family : List.of("Noto Emoji", "Segoe UI Emoji", "Apple Color Emoji", "Segoe UI Symbol", FONT)) {

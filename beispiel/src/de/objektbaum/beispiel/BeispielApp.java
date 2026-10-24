@@ -83,9 +83,15 @@ public final class BeispielApp {
 
     /** Richtet den Viewer ein – gemeinsam für Browser- und Swing-Version. */
     static ObjectViewer viewer(Path configDir) {
-        return ObjectViewer.builder()
+        return builder(configDir)
                 .title("Objekt-Viewer")
                 .root(beispielDaten())
+                .build();
+    }
+
+    /** Gemeinsame Teile aller Beispiele: Konfigurationsordner, Aktionen und Auswahllisten. */
+    static ObjectViewer.Builder builder(Path configDir) {
+        return ObjectViewer.builder()
                 .configDir(configDir)
                 // Aktionen und Auswahllisten, die viewer.xml per Name aufruft
                 .action("rateBerechnen", BeispielApp::rateBerechnen)
@@ -97,8 +103,7 @@ public final class BeispielApp {
                 // Auswahlwerte der Variante, z. B. aus Datenbank, Webservice oder Enum.
                 // Wird bei jedem Anzeigen aufgerufen; "node" ist das angezeigte Objekt.
                 .options("statusVariante", BeispielApp::statusWerte)
-                .options("produkte", BeispielApp::produkte)
-                .build();
+                .options("produkte", BeispielApp::produkte);
     }
 
     // =====================================================================

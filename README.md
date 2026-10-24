@@ -18,8 +18,9 @@ Unterobjekten – **im Browser** oder als **Swing-Fenster**. Reines Java 17+, ke
 ./run.sh                       Browser-Version  -> http://localhost:8080/
 ./run.sh 8080 0.0.0.0          aus dem Netzwerk erreichbar, z. B. http://hawk:8080/
 ./run-swing.sh                 Swing-Fenster (braucht eine grafische Oberfläche)
+./run-vorgang.sh               Swing: Anmeldung (demo/demo) -> Vorgang suchen (100000001) -> Baum per Klick
 ```
-Windows: `run.bat`, `run-swing.bat`. Das Beispiel liest `beispiel/config/` – dort einfach
+Windows: `run.bat`, `run-swing.bat`, `run-vorgang.bat`. Das Beispiel liest `beispiel/config/` – dort einfach
 `viewer.xml` oder `templates/style.css` ändern, speichern und die Seite neu laden.
 
 ## Projektaufbau
@@ -200,6 +201,56 @@ Wer eine Datei nicht anpasst, löscht sie einfach – dann gilt automatisch die 
 
 ---
 
+## Anmeldung, Vorgang suchen, Baum per Klick (Swing)
+
+Ablauf wie im Fachsystem: **Anmeldemaske → „Vorgang suchen“ → „Vorgang lesen“ zeigt nur den Vorgang → jeder Klick
+auf ein Objekt ruft einen Listener auf, der Kinder anhängen kann** – der Baum baut sich Klick für Klick auf.
+Die Anwendung liefert nur die vier Teile in Java; Masken, Hintergrund-Threads, Meldungen und Aktualisierung macht
+das Framework. Ausprobieren: `./run-vorgang.sh` (Benutzer `demo`, Passwort `demo`, VorgangsNummer `100000001`).
+
+```java
+ObjectViewer.builder()
+        .configDir(Path.of("config"))
+        .login((benutzer, passwort) -> {                 // normales Ende = angemeldet
+            if (!ldap.pruefe(benutzer, passwort)) throw new Exception("Benutzer oder Passwort falsch.");
+        })
+        .searchFields("VorgangsId", "VorgangsNummer")    // Standard
+        .search(kriterien -> dyns.leseVorgang(           // leere Felder fehlen; null = „Nichts gefunden“
+                kriterien.get("VorgangsId"), kriterien.get("VorgangsNummer")))
+        .onNodeClick(knoten -> {                         // bei JEDEM Klick, im Hintergrund
+            knoten.removeChildren();                     // optional: frisch aufbauen
+            for (ObjectNode kind : dyns.kinder(knoten)) knoten.add(kind);
+            return null;                                 // oder eine Meldung; Exception = rote Meldung
+        })
+        .nodeStyle(n -> "Abgelehnt".equals(n.fields().get("Status"))
+                ? NodeStyle.of().color("#9ca3af").italic() : null)
+        .treeButton("Angebot löschen", (knoten, werte) -> { knoten.parent().removeChild(knoten); return "gelöscht"; })
+        .build()
+        .openSwing();
+```
+
+| Teil | Interface | Hinweise |
+|---|---|---|
+| Anmeldung | `LoginHandler.login(user, char[] passwort)` | Passwort wird danach überschrieben; `viewer.user()` = angemeldeter Benutzer; „Abmelden“ oben rechts verwirft den Vorgang |
+| Suche | `SearchHandler.search(Map kriterien) → ObjectNode` | Ergebnis = neue Wurzel; `viewer.root()` liefert sie; `root(...)` im Builder ist dann nicht nötig |
+| Klick | `NodeClickListener.clicked(knoten) → Meldung` | gilt für Navigation, Baumtabelle, Pfad und Unterobjekte; Auf-/Zuklappen (+/−, Dreieck) löst ihn **nicht** aus; nur das Ergebnis des letzten Klicks wird angezeigt |
+| Buttons unter der Baumtabelle | `Button.Action` mit dem ausgewählten Objekt | auch in `viewer.xml`: `<treetable><button label="…" action="…"/></treetable>`; wird das Objekt entfernt, erscheint sein Elternobjekt |
+
+Mit Suchmaske startet die Swing-Version in der Baumtabelle (wie im Fachsystem); „Baum“ bleibt umschaltbar.
+Wer unter den Frames keine Unterobjekte sehen will: `<view … children="false">`.
+Die Browser-Version zeigt `NodeStyle` ebenfalls; Anmeldung, Suche und Klick-Listener gibt es bisher nur in Swing.
+
+### Aussehen je Objekt
+
+```java
+knoten.style(NodeStyle.of().color("#b91c1c").background("#fee2e2").bold().icon("⚠").tooltip("Prüfen"));
+builder.nodeStyle(n -> …);   // Regel für alle; knoten.style(...) hat Vorrang
+```
+
+Wirkt in Navigation, Baumtabelle (ganze Zeile) und Überschrift – in Swing und im Browser. Farben als `#rrggbb`.
+
+---
+
 ## swing.properties (Swing-Version)
 
 Liegt im Konfigurationsordner neben `viewer.xml` (`init` legt sie mit Erklärungen an). Änderungen übernimmt das
@@ -229,7 +280,8 @@ gelten für die betroffenen Trennlinien wieder die Startgrößen (statt alter We
 | Klasse | Zweck |
 |---|---|
 | `ObjectViewer` | Einstieg: `builder()…build()`, dann `startWeb(host, port)` / `openSwing()` |
-| `ObjectNode` | Objekt: `field(k, v)`, `child(name, typ)`, `add(node)`, `lazy(loader)`, `reload()`, `view(nodeView)` |
+| `ObjectNode` | Objekt: `field(k, v)`, `child(name, typ)`, `add(node)`, `removeChild(n)`, `removeChildren()`, `lazy(loader)`, `reload()`, `view(nodeView)`, `style(nodeStyle)` |
+| `LoginHandler`, `SearchHandler`, `NodeClickListener`, `NodeStyle` | Anmeldung, Vorgang suchen, Baum per Klick, Aussehen je Objekt |
 | `ObjectType` | Typ: `of("ID")`, `define(id, label, icon)`, `GRUPPE`, `UNBEKANNT` |
 | `Button.Action` | `(node, werte) -> "Meldung"` – Eingaben sind bereits gespeichert; Exception = Fehlermeldung |
 | `OptionSource` | `node -> List<String>` – Auswahlwerte für combo/list |
@@ -250,4 +302,6 @@ Gespeicherte Eingaben liegen in den Feldern der `ObjectNode`s (Arbeitsspeicher).
 | viewer.xml live | ✔ beim Neuladen der Seite | ✔ automatisch |
 | Aussehen ohne Neukompilieren | ✔ templates/ | ✔ swing.properties |
 | Dunkles Farbschema | ✔ nach Systemeinstellung | ✔ hell / dunkel / nach Systemeinstellung |
+| Aussehen je Objekt (`NodeStyle`) | ✔ | ✔ |
+| Anmeldung, Vorgang suchen, Klick-Listener, Buttons unter der Baumtabelle | – | ✔ |
 | Zugriff von anderen Rechnern / ohne Bildschirm | ✔ | – |

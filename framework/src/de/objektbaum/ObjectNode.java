@@ -26,6 +26,7 @@ public final class ObjectNode {
     private volatile ObjectNode parent;
 
     private volatile NodeView view;
+    private volatile NodeStyle style;
     private ChildLoader loader;
     private volatile boolean loaded = true;
 
@@ -63,6 +64,17 @@ public final class ObjectNode {
         return view;
     }
 
+    /** Eigenes Aussehen dieses Objekts (Farbe, fett, Icon …); null = Standard bzw. Regel aus dem Builder. */
+    public ObjectNode style(NodeStyle style) {
+        this.style = style;
+        return this;
+    }
+
+    /** Das eigene Aussehen oder null. */
+    public NodeStyle style() {
+        return style;
+    }
+
     // ------------------------------------------------------------ Unterobjekte
 
     /** Hängt ein Unterobjekt an und gibt this zurück. */
@@ -93,6 +105,14 @@ public final class ObjectNode {
             return true;
         }
         return false;
+    }
+
+    /** Entfernt alle Unterobjekte (z. B. um sie in einem {@link NodeClickListener} neu aufzubauen). */
+    public synchronized void removeChildren() {
+        for (ObjectNode c : children) {
+            c.parent = null;
+        }
+        children.clear();
     }
 
     /**

@@ -39,13 +39,19 @@ final class NavTree {
     private static final String NOT_LOADED = " ";
 
     private final Consumer<ObjectNode> open;
+    private final java.util.function.Function<ObjectNode, de.objektbaum.NodeStyle> styler;
     private final DefaultTreeModel model;
     private final JTree tree;
     private final Map<ObjectNode, DefaultMutableTreeNode> map = new IdentityHashMap<>();
     private boolean programmatic;
 
     NavTree(ObjectNode root, Consumer<ObjectNode> open) {
+        this(root, open, n -> null);
+    }
+
+    NavTree(ObjectNode root, Consumer<ObjectNode> open, java.util.function.Function<ObjectNode, de.objektbaum.NodeStyle> styler) {
         this.open = open;
+        this.styler = styler;
         this.model = new DefaultTreeModel(build(root));
         this.tree = new JTree(model);
         style();
@@ -252,12 +258,16 @@ final class NavTree {
                 super.getTreeCellRendererComponent(t, value, sel, exp, leaf, row, false);
                 Object u = ((DefaultMutableTreeNode) value).getUserObject();
                 setBorder(Ui.pad(3, 6, 3, 8));
+                styleBg = null;
                 if (u instanceof ObjectNode n) {
+                    de.objektbaum.NodeStyle st = styler.apply(n);
                     setText(n.name());
-                    setIcon(Ui.typeIcon(n.type(), 16));
-                    setFont(Ui.font(Font.PLAIN, 14));
-                    setToolTipText(Ui.typeLabel(n.type()));
-                    setForeground(sel ? Ui.ON_ACCENT : Ui.NAV_FG);
+                    setIcon(Ui.nodeIcon(n, st, 16));
+                    setFont(Ui.font(Ui.fontStyle(st, Font.PLAIN), 14));
+                    setToolTipText(st != null && st.tooltip() != null ? st.tooltip() : Ui.typeLabel(n.type()));
+                    Color own = st == null ? null : Ui.hex(st.color());
+                    setForeground(sel ? Ui.ON_ACCENT : own != null ? own : Ui.NAV_FG);
+                    styleBg = st == null ? null : Ui.hex(st.background());
                 } else {
                     setText(String.valueOf(u));
                     setIcon(null);
@@ -274,8 +284,17 @@ final class NavTree {
                 setOpaque(false);
             }
 
+            private Color styleBg;
+
             @Override
             protected void paintComponent(Graphics g) {
+                if (!selected && styleBg != null) {
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    g2.setColor(styleBg);
+                    g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 10, 10);
+                    g2.dispose();
+                }
                 if (selected) {
                     Graphics2D g2 = (Graphics2D) g.create();
                     g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
