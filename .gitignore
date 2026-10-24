@@ -6,3 +6,5 @@ sources.txt
 *.iml
 .vscode/
 .DS_Store
+.metadata/
+.project
