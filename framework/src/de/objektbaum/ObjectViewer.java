@@ -30,6 +30,7 @@ import java.util.Objects;
  * <ul>
  *   <li>{@code viewer.xml} – Objekttypen, Spalten der Baumtabelle, Ansichten</li>
  *   <li>{@code templates/page.html, style.css, app.js} – Aussehen der Browser-Version</li>
+ *   <li>{@code swing.properties} – Aussehen der Swing-Version (Look and Feel, hell/dunkel, Schrift, Farben)</li>
  * </ul>
  * Beide werden bei Änderungen sofort neu gelesen. Fehlende Dateien: Es gelten die Standardwerte.
  */
@@ -43,6 +44,7 @@ public final class ObjectViewer {
     private final ConfigStore config;
     private final Templates templates;
     private final HtmlRenderer renderer;
+    private final Path configDir;
 
     private ObjectViewer(Builder b) {
         this.root = Objects.requireNonNull(b.root, "root: Wurzelobjekt fehlt");
@@ -50,8 +52,9 @@ public final class ObjectViewer {
         this.codeTreeColumns = b.treeColumns;
         this.views = b.views;
         this.bindings = b.bindings;
+        this.configDir = b.configDir == null ? null : b.configDir.toAbsolutePath().normalize();
         if (b.configDir != null) {
-            Path dir = b.configDir.toAbsolutePath().normalize();
+            Path dir = configDir;
             this.config = new ConfigStore(dir.resolve("viewer.xml"), bindings);
             this.templates = new Templates(dir.resolve("templates"));
         } else {
@@ -90,6 +93,11 @@ public final class ObjectViewer {
     public Object configStamp() {
         if (config == null) return null;
         return java.util.List.of(config.current(), String.valueOf(config.error()));
+    }
+
+    /** Konfigurationsordner (absolut) oder null. */
+    public Path configDir() {
+        return configDir;
     }
 
     public ObjectNode root() {

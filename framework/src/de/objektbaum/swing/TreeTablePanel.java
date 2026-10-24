@@ -52,10 +52,18 @@ import java.util.function.Consumer;
  */
 final class TreeTablePanel {
 
-    private static final int INDENT = 18;
-    private static final int TOGGLE = 20;
+    private final int INDENT = Ui.px(18);
+    private final int TOGGLE = Ui.px(20);
 
     private record Row(ObjectNode node, int depth) {
+    }
+
+    /**
+     * Zustand, der beim Neuaufbau (geänderte Spalten in viewer.xml, anderes Aussehen) erhalten bleibt.
+     * Filter, Sortierung und Breiten hängen an der Spaltenüberschrift – entfällt eine Spalte, entfällt ihr Zustand.
+     */
+    record State(Set<ObjectNode> expanded, java.util.Map<String, String> filters, String sortHeader, int dir,
+                 java.util.Map<String, Integer> widths, ObjectNode selected) {
     }
 
     private final ObjectNode root;
@@ -80,6 +88,12 @@ final class TreeTablePanel {
     private final JComponent component;
 
     TreeTablePanel(ObjectNode root, List<TreeColumn> columns, Consumer<ObjectNode> open, Consumer<ObjectNode> loaded) {
+        this(root, columns, open, loaded, null);
+    }
+
+    /** @param previous Zustand einer früheren Baumtabelle, der übernommen wird, oder null */
+    TreeTablePanel(ObjectNode root, List<TreeColumn> columns, Consumer<ObjectNode> open, Consumer<ObjectNode> loaded,
+                   State previous) {
         this.root = root;
         this.columns = List.copyOf(columns);
         this.open = open;
@@ -129,7 +143,7 @@ final class TreeTablePanel {
                 return failed.contains(n) ? "Laden fehlgeschlagen – erneut auf + klicken" : null;
             }
         };
-        table.setRowHeight(32);
+        table.setRowHeight(Ui.px(32));
         table.setShowVerticalLines(false);
         table.setGridColor(Ui.LINE);
         table.setIntercellSpacing(new Dimension(0, 1));
@@ -137,6 +151,8 @@ final class TreeTablePanel {
         table.setRowSelectionAllowed(false);
         table.setFocusable(false);
         table.setDefaultRenderer(Object.class, new CellRenderer());
+        table.setBackground(Ui.PANEL);
+        table.setForeground(Ui.FG);
         table.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         JTableHeader header = table.getTableHeader();
         header.setReorderingAllowed(false);
@@ -166,14 +182,48 @@ final class TreeTablePanel {
         });
 
         TableColumnModel cm = table.getColumnModel();
-        cm.getColumn(0).setPreferredWidth(32);
-        cm.getColumn(0).setMaxWidth(32);
+        cm.getColumn(0).setPreferredWidth(Ui.px(32));
+        cm.getColumn(0).setMaxWidth(Ui.px(32));
         for (int i = 0; i < columns.size(); i++) {
-            cm.getColumn(i + 1).setPreferredWidth(columns.get(i).kind() == TreeColumn.Kind.NAME ? 380 : 190);
+            Integer w = previous == null ? null : previous.widths().get(columns.get(i).header());
+            cm.getColumn(i + 1).setPreferredWidth(w != null ? w
+                    : Ui.px(columns.get(i).kind() == TreeColumn.Kind.NAME ? 380 : 190));
         }
 
+        if (previous != null) {
+            expanded.addAll(previous.expanded());
+            for (int i = 0; i < columns.size(); i++) {
+                String f = previous.filters().get(columns.get(i).header());
+                if (f != null) filters[i] = f;
+                if (columns.get(i).header().equals(previous.sortHeader())) {
+                    sortCol = i;
+                    dir = previous.dir();
+                }
+            }
+            selected = previous.selected();
+        }
         component = build();
         rebuild();
+    }
+
+    /** Aktueller Zustand, um ihn an eine neu aufgebaute Baumtabelle weiterzugeben. */
+    State state() {
+        java.util.Map<String, String> f = new java.util.HashMap<>();
+        java.util.Map<String, Integer> w = new java.util.HashMap<>();
+        TableColumnModel cm = table.getColumnModel();
+        for (int i = 0; i < columns.size(); i++) {
+            f.put(columns.get(i).header(), filters[i]);
+            w.put(columns.get(i).header(), cm.getColumn(i + 1).getWidth() > 0 ? cm.getColumn(i + 1).getWidth()
+                    : cm.getColumn(i + 1).getPreferredWidth());
+        }
+        Set<ObjectNode> ex = Collections.newSetFromMap(new IdentityHashMap<>());
+        ex.addAll(expanded);
+        return new State(ex, f, sortCol < 0 ? null : columns.get(sortCol).header(), dir, w, selected);
+    }
+
+    /** Die Spalten, mit denen diese Baumtabelle gebaut wurde. */
+    List<TreeColumn> columns() {
+        return columns;
     }
 
     JComponent component() {
@@ -245,21 +295,24 @@ final class TreeTablePanel {
                 int x = 0;
                 for (int i = 0; i < cm.getColumnCount(); i++) {
                     int w = cm.getColumn(i).getWidth();
-                    if (i > 0) filterFields.get(i - 1).setBounds(x + 6, 4, Math.max(20, w - 12), 26);
+                    if (i > 0) filterFields.get(i - 1).setBounds(x + 6, Ui.px(4), Math.max(20, w - 12), Ui.px(26));
                     x += w;
                 }
             }
 
             @Override
             public Dimension getPreferredSize() {
-                return new Dimension(table.getColumnModel().getTotalColumnWidth(), 34);
+                return new Dimension(table.getColumnModel().getTotalColumnWidth(), Ui.px(34));
             }
         };
         filterRow.setBackground(Ui.ZEBRA);
         filterRow.setBorder(Ui.line(0, 0, 1, 0));
         for (int i = 0; i < columns.size(); i++) {
             int col = i;
-            JTextField f = new JTextField("*");
+            JTextField f = new JTextField(filters[i]);
+            f.setBackground(Ui.PANEL);
+            f.setForeground(Ui.FG);
+            f.setCaretColor(Ui.FG);
             f.setFont(Ui.font(Font.PLAIN, 13));
             f.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Ui.LINE), Ui.pad(2, 6, 2, 6)));
             f.setToolTipText("Filter " + columns.get(i).header());
@@ -531,7 +584,7 @@ final class TreeTablePanel {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g2.setColor(Ui.PANEL);
             g2.fillRoundRect(x, y, TOGGLE - 1, TOGGLE - 1, 5, 5);
-            g2.setColor(failed.contains(n) ? new Color(0xdc2626) : Ui.MUTED);
+            g2.setColor(failed.contains(n) ? Ui.danger() : Ui.MUTED);
             g2.drawRoundRect(x, y, TOGGLE - 1, TOGGLE - 1, 5, 5);
             g2.setFont(Ui.font(Font.BOLD, 14));
             var fm = g2.getFontMetrics();

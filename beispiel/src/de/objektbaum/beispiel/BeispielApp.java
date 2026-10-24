@@ -197,6 +197,8 @@ public final class BeispielApp {
                 .field("Status", "In Bearbeitung")
                 .field("Berater", "A. Huber")
                 .field("Eröffnet", "02.09.2026")
+                .field("Wiedervorlage", "")
+                .field("Unterlagen vollständig", "nein")
                 .field("Filiale", "Musterstadt Mitte");
 
         // ASEs am Vorgang: erst beim Aufklappen laden
@@ -252,7 +254,8 @@ public final class BeispielApp {
                 .field("Familienstand", "verheiratet")
                 .field("E-Mail", vorname.toLowerCase(Locale.ROOT) + "." + nachname.toLowerCase(Locale.ROOT) + "@example.com")
                 .field("Telefon", "").field("Kontaktweg", "E-Mail")
-                .field("Beruf", "Angestellte/r").field("Nettoeinkommen", "3.400,00 €");
+                .field("Beruf", "Angestellte/r").field("Nettoeinkommen", "3.400,00 €")
+                .field("Werbeeinwilligung", "nein");
         obj(p, "Musterweg 1, 12345 Musterstadt", Typ.ADRESSE, "Wohnadresse")
                 .field("Straße", "Musterweg 1").field("PLZ", "12345").field("Ort", "Musterstadt");
         obj(p, "VinPerson " + vorname, Typ.VIN_PERSON, "Verknüpfung");

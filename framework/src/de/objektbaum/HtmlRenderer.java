@@ -305,6 +305,12 @@ public final class HtmlRenderer {
                 }
             } else if (el instanceof TextField tf) {
                 renderTextField(sb, id, tf, fields.get(tf.key()));
+            } else if (el instanceof NumberField nf) {
+                renderNumberField(sb, id, nf, fields.get(nf.key()));
+            } else if (el instanceof DateField df) {
+                renderDateField(sb, id, df, fields.get(df.key()));
+            } else if (el instanceof CheckBox cbx) {
+                renderCheckBox(sb, id, cbx, fields.get(cbx.key()));
             } else if (el instanceof ComboBox cb) {
                 renderComboBox(sb, id, cb, fields.get(cb.key()), cb.options().options(node));
             } else if (el instanceof ComboList cl) {
@@ -331,6 +337,48 @@ public final class HtmlRenderer {
             sb.append(tf.editable() ? " name=\"" + esc(tf.key()) + "\"" : " readonly");
             sb.append(">\n");
         }
+    }
+
+    private void renderNumberField(StringBuilder sb, String id, NumberField nf, Object value) {
+        String v = value == null ? "" : text(value);
+        sb.append("<label for=\"").append(id).append("\">").append(esc(nf.label())).append("</label>");
+        sb.append("<div class=\"with-unit\"><input type=\"text\" inputmode=\"decimal\" class=\"num\" id=\"").append(id)
+          .append("\" value=\"").append(esc(v)).append('"')
+          .append(nf.editable() ? " name=\"" + esc(nf.key()) + "\" pattern=\"\\s*[+\\-]?[0-9.,\\s]*\\s*\""
+                  + " title=\"Zahl, z. B. 150.000,00\"" : " readonly")
+          .append(">");
+        if (!nf.unit().isEmpty()) sb.append("<span class=\"unit\">").append(esc(nf.unit())).append("</span>");
+        sb.append("</div>\n");
+    }
+
+    private void renderDateField(StringBuilder sb, String id, DateField df, Object value) {
+        String v = value == null ? "" : text(value);
+        java.time.LocalDate d = DateField.parse(v);
+        sb.append("<label for=\"").append(id).append("\">").append(esc(df.label())).append("</label>");
+        if (df.editable() && (d != null || v.isBlank())) {
+            // Browser-Datumsauswahl; liefert JJJJ-MM-TT, gespeichert wird TT.MM.JJJJ
+            sb.append("<input type=\"date\" id=\"").append(id).append("\" name=\"").append(esc(df.key()))
+              .append("\" value=\"").append(d == null ? "" : d.toString()).append("\">\n");
+        } else {
+            sb.append("<input type=\"text\" id=\"").append(id).append("\" value=\"").append(esc(v)).append('"')
+              .append(df.editable() ? " name=\"" + esc(df.key()) + "\" placeholder=\"TT.MM.JJJJ\"" : " readonly")
+              .append(">\n");
+        }
+    }
+
+    private void renderCheckBox(StringBuilder sb, String id, CheckBox cb, Object value) {
+        boolean on = CheckBox.isChecked(value);
+        sb.append("<label for=\"").append(id).append("\">").append(esc(cb.label())).append("</label>");
+        sb.append("<div class=\"check\">");
+        if (cb.editable()) {
+            // nicht angehakte Checkboxen schickt der Browser nicht mit: "nein" als Grundwert
+            sb.append("<input type=\"hidden\" name=\"").append(esc(cb.key())).append("\" value=\"nein\">")
+              .append("<input type=\"checkbox\" id=\"").append(id).append("\" name=\"").append(esc(cb.key()))
+              .append("\" value=\"ja\"").append(on ? " checked" : "").append(">");
+        } else {
+            sb.append("<input type=\"checkbox\" id=\"").append(id).append("\" disabled").append(on ? " checked" : "").append(">");
+        }
+        sb.append("</div>\n");
     }
 
     private void renderComboBox(StringBuilder sb, String id, ComboBox cb, Object value, List<String> options) {

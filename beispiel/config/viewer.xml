@@ -66,6 +66,9 @@
           <text   key="Bezeichnung"/>
           <combo  key="Status"  options="Neu | In Bearbeitung | Entscheidung | Abgeschlossen"/>
           <combo  key="Berater" source="berater" free="true"/>
+          <date   key="Eröffnet"/>
+          <date   key="Wiedervorlage"/>
+          <check  key="Unterlagen vollständig"/>
           <button label="Speichern"/>
         </segment>
       </column>
@@ -84,6 +87,7 @@
           <!-- Auswahlwerte kommen aus Java: .options("statusVariante", ...) und .options("produkte", ...) -->
           <combo  key="Status"   source="statusVariante"/>
           <list   key="Produkte" source="produkte" multiple="true" rows="5"/>
+          <check  key="Hauptvariante" editable="false"/>
           <button label="Speichern"/>
           <button label="Als Hauptvariante markieren" action="alsHauptvariante"/>
         </segment>
@@ -105,9 +109,10 @@
     <view name="Angebot" type="ANGEBOT">
       <column width="1">
         <segment title="Konditionen">
-          <text  key="Darlehensbetrag" label="Darlehensbetrag €"/>
-          <text  key="Sollzins"        label="Sollzins %"/>
-          <text  key="Tilgung"         label="Anf. Tilgung %"/>
+          <!-- Zahlen werden geprüft und einheitlich formatiert (z. B. 150000 -> 150.000,00) -->
+          <number key="Darlehensbetrag" unit="€" min="1.000" max="10.000.000"/>
+          <number key="Sollzins"        unit="%" decimals="2" min="0" max="20"/>
+          <number key="Tilgung"         label="Anf. Tilgung" unit="%" decimals="2" min="1" max="10"/>
           <combo key="Zinsbindung"     options="5 Jahre | 10 Jahre | 15 Jahre | 20 Jahre"/>
           <button label="Rate berechnen" action="rateBerechnen"/>
           <button label="Speichern"/>
@@ -134,6 +139,7 @@
           <text  key="E-Mail"/>
           <text  key="Telefon"/>
           <combo key="Kontaktweg" options="E-Mail | Telefon | Post"/>
+          <check key="Werbeeinwilligung"/>
           <button label="Speichern"/>
         </segment>
       </column>

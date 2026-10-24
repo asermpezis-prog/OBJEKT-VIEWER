@@ -71,7 +71,7 @@ final class NavTree {
     }
 
     JComponent component(String title) {
-        JLabel brand = Ui.label(title, Font.BOLD, 17, Color.WHITE);
+        JLabel brand = Ui.label(title, Font.BOLD, 17, Ui.mix(Ui.NAV_FG, Color.WHITE, 0.3));
         brand.setBorder(javax.swing.BorderFactory.createCompoundBorder(
                 javax.swing.BorderFactory.createMatteBorder(0, 0, 1, 0, Ui.NAV_HI), Ui.pad(4, 8, 14, 8)));
         JScrollPane sp = new JScrollPane(tree);
@@ -120,6 +120,35 @@ final class NavTree {
 
     void repaint() {
         tree.repaint();
+    }
+
+    /** Alle aufgeklappten Objekte (um sie nach einem Neuaufbau wieder aufzuklappen). */
+    java.util.List<ObjectNode> expandedNodes() {
+        java.util.List<ObjectNode> out = new java.util.ArrayList<>();
+        java.util.Enumeration<TreePath> e = tree.getExpandedDescendants(new TreePath(model.getRoot()));
+        while (e != null && e.hasMoreElements()) {
+            Object u = ((DefaultMutableTreeNode) e.nextElement().getLastPathComponent()).getUserObject();
+            if (u instanceof ObjectNode n) out.add(n);
+        }
+        return out;
+    }
+
+    /** Klappt diese Objekte auf (nur bereits geladene; nichts wird nachgeladen). */
+    void expand(java.util.Collection<ObjectNode> nodes) {
+        programmatic = true;
+        try {
+            for (ObjectNode node : nodes) {
+                DefaultMutableTreeNode d = null;
+                for (ObjectNode p : node.path()) {
+                    d = map.get(p);
+                    if (d == null || !p.isLoaded()) break;
+                    if (hasPlaceholder(d)) populate(d);
+                }
+                if (d != null && node.isLoaded() && map.get(node) == d) tree.expandPath(new TreePath(d.getPath()));
+            }
+        } finally {
+            programmatic = false;
+        }
     }
 
     // ---------------------------------------------------------------- intern
@@ -199,7 +228,7 @@ final class NavTree {
         tree.setBackground(Ui.NAV);
         tree.setRootVisible(true);
         tree.setShowsRootHandles(true);
-        tree.setRowHeight(30);
+        tree.setRowHeight(Ui.px(30));
         tree.putClientProperty("JTree.lineStyle", "None");
         tree.setToggleClickCount(0);
         javax.swing.plaf.basic.BasicTreeUI ui = new javax.swing.plaf.basic.BasicTreeUI() {
@@ -228,12 +257,12 @@ final class NavTree {
                     setIcon(Ui.typeIcon(n.type(), 16));
                     setFont(Ui.font(Font.PLAIN, 14));
                     setToolTipText(Ui.typeLabel(n.type()));
-                    setForeground(sel ? Color.WHITE : Ui.NAV_FG);
+                    setForeground(sel ? Ui.ON_ACCENT : Ui.NAV_FG);
                 } else {
                     setText(String.valueOf(u));
                     setIcon(null);
                     setFont(Ui.font(Font.ITALIC, 13));
-                    setForeground(String.valueOf(u).startsWith("Laden") ? new Color(0xf87171) : Ui.MUTED);
+                    setForeground(String.valueOf(u).startsWith("Laden") ? new Color(0xf87171) : Ui.mix(Ui.NAV_FG, Ui.NAV, 0.6));
                 }
                 return this;
             }

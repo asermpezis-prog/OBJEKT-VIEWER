@@ -569,6 +569,40 @@ body.drag-h, body.drag-h * {
   outline-offset: -1px;
 }
 
+/* Zahl mit Einheit, Datum, Checkbox */
+.form-grid .with-unit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-grid .with-unit .unit {
+  color: var(--muted);
+  font-size: 13px;
+  min-width: 1.5em;
+}
+
+.form-grid input.num {
+  text-align: right;
+}
+
+.form-grid input:invalid {
+  border-color: #dc2626;
+}
+
+.form-grid .check {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+}
+
+.form-grid input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .btn-row {
   display: flex;
   gap: 8px;

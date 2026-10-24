@@ -8,7 +8,7 @@ Unterobjekten – **im Browser** oder als **Swing-Fenster**. Reines Java 17+, ke
   Textfelder, ComboBoxen, ComboListen und Buttons mit Java-Aktionen
 - **Lazy Loading** von Unterobjekten
 - **Nach der Entwicklung selbst anpassbar, ohne Neukompilieren und ohne Neustart:**
-  Objekttypen, Baumtabelle und Ansichten in `viewer.xml`, Aussehen in `templates/`
+  Objekttypen, Baumtabelle und Ansichten in `viewer.xml`, Aussehen in `templates/` (Browser) bzw. `swing.properties` (Swing)
 
 ---
 
@@ -42,7 +42,7 @@ build.sh / build.bat    baut dist/objektviewer.jar und das Beispiel
 ```
 java -jar objektviewer.jar init config
 ```
-legt `config/viewer.xml` (kommentierte Vorlage) und `config/templates/` (page.html, style.css, app.js) an.
+legt `config/viewer.xml` (kommentierte Vorlage), `config/swing.properties` und `config/templates/` (page.html, style.css, app.js) an.
 
 **3. Im Code nur das, was Code sein muss** – Daten, Loader, Aktionen:
 ```java
@@ -86,10 +86,11 @@ public class MeineApp {
 | Daten, Lazy-Loader | Java (`ObjectNode`, `.lazy(...)`) | – |
 | Button-Aktionen, dynamische Auswahllisten | Java (`.action(...)`, `.options(...)`) | – |
 | Objekttypen: Anzeigetext, Icon | `viewer.xml` `<types>` | ✔ sofort |
-| Spalten der Baumtabelle | `viewer.xml` `<treetable>` | ✔ sofort (Swing: beim Neustart) |
+| Spalten der Baumtabelle | `viewer.xml` `<treetable>` | ✔ sofort |
 | Ansichten: Spalten, Segmente, Felder, Eingaben, Buttons | `viewer.xml` `<views>` | ✔ sofort |
 | Anwendungstitel | `viewer.xml` `title="…"` (sonst Code) | ✔ sofort |
 | Seitengerüst, Farben, Schriften, Verhalten im Browser | `templates/page.html`, `style.css`, `app.js` | ✔ sofort |
+| Aussehen der Swing-Version: Look and Feel, hell/dunkel, Schrift, Farben | `swing.properties` | ✔ sofort |
 
 „Sofort“ heißt: Datei speichern → Seite neu laden. Die Swing-Version aktualisiert sich innerhalb einer Sekunde selbst.
 
@@ -151,9 +152,16 @@ Die mit `init` angelegte `viewer.xml` enthält alle Elemente als Kommentar zum N
 | `<fields>` | `keys="A \| B"` oder `select`=`all`/`remaining`, `layout` | Feld-Tabelle; `remaining` = alle Felder, die sonst nirgends stehen |
 | `<text>` | `key`*, `label`, `rows` | Eingabefeld, `rows` > 1 = mehrzeilig |
 | `<output>` | `key`*, `label`, `rows` | nur Anzeige |
+| `<number>` | `key`*, `label`, `decimals` (Standard 2), `min`, `max`, `unit`, `editable` | Zahl mit Prüfung; gespeichert deutsch formatiert (`150000` → `150.000,00`); `unit` steht hinter dem Feld |
+| `<date>` | `key`*, `label`, `editable` | Datum mit Prüfung, gespeichert `TT.MM.JJJJ`; erlaubt auch `2.9.26` und `2026-09-02`; Kalender (Swing) bzw. Datumsauswahl (Browser) |
+| `<check>` | `key`*, `label`, `editable` | Checkbox; gespeichert `ja` / `nein` |
 | `<combo>` | `key`*, `label`, `options` oder `source`, `free`, `editable` | Dropdown; `free="true"` erlaubt eigene Eingaben; `source` = Werte aus dem Code |
 | `<list>` | `key`*, `label`, `options` oder `source`, `multiple`, `rows`, `editable` | sichtbare Liste; `multiple="true"` speichert eine Liste |
 | `<button>` | `label`*, `action` | ohne `action`: speichert; mit: speichert und ruft die Aktion aus dem Code auf |
+
+Ist eine Eingabe ungültig (z. B. `abc` in `<number>`, `31.02.2026` in `<date>`), wird **nichts gespeichert** und keine Aktion
+ausgeführt; die Meldung nennt die Felder. In Swing bleiben die Eingaben stehen, das Feld ist rot markiert, der Fehler
+steht darunter – geprüft wird schon beim Verlassen des Felds.
 
 \* = Pflicht. `layout`: `vertical` = Key/Value, `horizontal` = Keys als Spalten; ohne Angabe gilt der Umschalter im Header.
 
@@ -192,6 +200,30 @@ Wer eine Datei nicht anpasst, löscht sie einfach – dann gilt automatisch die 
 
 ---
 
+## swing.properties (Swing-Version)
+
+Liegt im Konfigurationsordner neben `viewer.xml` (`init` legt sie mit Erklärungen an). Änderungen übernimmt das
+offene Fenster innerhalb einer Sekunde; Auswahl, aufgeklappte Knoten, Filter und **ungespeicherte Eingaben bleiben**.
+Fehler erscheinen wie bei `viewer.xml` als rotes Band mit Zeilennummer, es gilt die letzte gültige Fassung.
+
+```properties
+aussehen       = metal        # metal (empfohlen) | nimbus | system
+farbschema     = system       # hell | dunkel | system (folgt Windows, macOS, GNOME)
+schrift        = Segoe UI, Inter, Noto Sans, DejaVu Sans
+schriftgroesse = 14           # 10 bis 24, Zeilenhöhen wachsen mit
+farbe.akzent        = #2563eb # für hell und dunkel
+farbe.akzent.dunkel = #60a5fa # nur dunkel (ebenso .hell)
+```
+
+Farbnamen: `hintergrund, flaeche, navigation, navigation.text, navigation.linie, akzent, text, text.grau, linie,
+zebra, auswahl, ok.hintergrund, ok.linie, ok.text, fehler.hintergrund, fehler.linie, fehler.text`.
+Bei `aussehen = system` übernehmen Eingabefelder, Listen und Scrollbalken die Farben nur teilweise.
+
+Gespeicherte Größen der Frames hängen an den **Segmenttiteln**: Ändert sich in `viewer.xml` Anzahl oder Reihenfolge,
+gelten für die betroffenen Trennlinien wieder die Startgrößen (statt alter Werte an falscher Stelle).
+
+---
+
 ## Java-API (Kurzüberblick)
 
 | Klasse | Zweck |
@@ -201,7 +233,8 @@ Wer eine Datei nicht anpasst, löscht sie einfach – dann gilt automatisch die 
 | `ObjectType` | Typ: `of("ID")`, `define(id, label, icon)`, `GRUPPE`, `UNBEKANNT` |
 | `Button.Action` | `(node, werte) -> "Meldung"` – Eingaben sind bereits gespeichert; Exception = Fehlermeldung |
 | `OptionSource` | `node -> List<String>` – Auswahlwerte für combo/list |
-| `NodeView`, `Column`, `Segment`, `FieldTable`, `TextField`, `ComboBox`, `ComboList`, `Button` | Ansichten im Code statt in XML |
+| `NodeView`, `Column`, `Segment`, `FieldTable`, `TextField`, `NumberField`, `DateField`, `CheckBox`, `ComboBox`, `ComboList`, `Button` | Ansichten im Code statt in XML |
+| `Element.Input#check` | Prüfung einer Eingabe; eigene Prüfungen über `FormSubmit.check(...)` |
 
 Gespeicherte Eingaben liegen in den Feldern der `ObjectNode`s (Arbeitsspeicher). Dauerhaft speichern
 (Datenbank, Datei) erledigt eine Button-Aktion.
@@ -212,8 +245,9 @@ Gespeicherte Eingaben liegen in den Feldern der `ObjectNode`s (Arbeitsspeicher).
 |---|---|---|
 | Baum / Baumtabelle, Filter, Sortierung, Alle auf/zu | ✔ | ✔ |
 | Frames verschieben, Größen merken, Doppelklick = zurücksetzen | ✔ | ✔ |
-| Textfeld, ComboBox, ComboListe, Buttons mit Java-Aktion | ✔ | ✔ |
+| Textfeld, Zahl, Datum, Checkbox, ComboBox, ComboListe, Buttons mit Java-Aktion | ✔ | ✔ |
 | Lazy Loading, Neu laden | ✔ | ✔ |
 | viewer.xml live | ✔ beim Neuladen der Seite | ✔ automatisch |
-| Templates (page.html, style.css, app.js) | ✔ | – (eigenes Swing-Aussehen) |
+| Aussehen ohne Neukompilieren | ✔ templates/ | ✔ swing.properties |
+| Dunkles Farbschema | ✔ nach Systemeinstellung | ✔ hell / dunkel / nach Systemeinstellung |
 | Zugriff von anderen Rechnern / ohne Bildschirm | ✔ | – |

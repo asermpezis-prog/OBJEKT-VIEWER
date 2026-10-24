@@ -31,10 +31,12 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Insets;
 import java.awt.Toolkit;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Supplier;
@@ -44,21 +46,31 @@ import java.util.function.Supplier;
  * (Navigation oder Baumtabelle, Header, Frames mit Segmenten, Unterobjekte), aber als eigenes Fenster
  * ohne Webserver.
  *
+ * <p>Live übernommen, ohne Neustart:
+ * <ul>
+ *   <li>{@code viewer.xml} – Ansichten, Typen, Titel und Spalten der Baumtabelle</li>
+ *   <li>{@code swing.properties} – Look and Feel, Farbschema (hell/dunkel/System), Schrift, Farben</li>
+ *   <li>bei {@code farbschema = system}: Wechsel des Betriebssystems zwischen hell und dunkel</li>
+ * </ul>
+ *
  * <pre>
  * new SwingViewer(root, "Objekt-Viewer", views, spalten).open();
  * </pre>
  */
 public final class SwingViewer {
 
+    private final ObjectNode root;
     private final Supplier<String> title;
     private final Supplier<String> configError;
     private final Supplier<Object> configStamp;
+    private final Supplier<List<TreeColumn>> treeColumns;
+    private final SwingStyle style;
     private Object lastStamp;
     private final ViewRegistry views;
 
-    private final NavTree nav;
-    private final TreeTablePanel treeTable;
-    private final JComponent navComponent;
+    private NavTree nav;
+    private TreeTablePanel treeTable;
+    private JComponent navComponent;
     private final JPanel rootPanel = new JPanel(new BorderLayout());
     private final JPanel header = new JPanel();
     private final JPanel content = new JPanel(new BorderLayout());
@@ -66,45 +78,50 @@ public final class SwingViewer {
 
     private ObjectNode current;
     private HtmlRenderer.Message message;
+    /** Eingaben, die beim nächsten Aufbau statt der Feldwerte gezeigt werden (ungespeichert). */
+    private Map<String, List<String>> draft;
+    /** Ungültige Eingaben der letzten Prüfung: Key → Fehlertext. */
+    private Map<String, String> invalid;
+    private FramesPanel frames;
     private Layout layout;
     private boolean tableMode;
+    private boolean dark;
+    private volatile boolean systemDark;
     private final Map<ObjectNode, String> loadErrors = new IdentityHashMap<>();
     private final Set<ObjectNode> loading = Collections.newSetFromMap(new IdentityHashMap<>());
 
     public SwingViewer(ObjectNode root, String title, ViewRegistry views, List<TreeColumn> treeColumns) {
-        this(root, () -> title, views, treeColumns, () -> null, () -> null);
+        this(root, () -> title, views, () -> treeColumns, () -> null, () -> null, null);
     }
 
     /**
      * Swing-Fenster zu einem {@link ObjectViewer}: gleiche Daten, Ansichten (inkl. viewer.xml) und Aktionen
-     * wie die Browser-Version. Änderungen an viewer.xml werden automatisch übernommen.
+     * wie die Browser-Version. Änderungen an viewer.xml und swing.properties werden automatisch übernommen.
      */
     public SwingViewer(ObjectViewer viewer) {
-        this(viewer.root(), viewer::title, viewer.views(), viewer.treeColumns(), viewer::configError, viewer::configStamp);
+        this(viewer.root(), viewer::title, viewer.views(), viewer::treeColumns, viewer::configError,
+                viewer::configStamp, viewer.configDir() == null ? null : viewer.configDir().resolve("swing.properties"));
     }
 
-    private SwingViewer(ObjectNode root, Supplier<String> title, ViewRegistry views, List<TreeColumn> treeColumns,
-                        Supplier<String> configError, Supplier<Object> configStamp) {
-        Ui.install();
+    private SwingViewer(ObjectNode root, Supplier<String> title, ViewRegistry views,
+                        Supplier<List<TreeColumn>> treeColumns, Supplier<String> configError,
+                        Supplier<Object> configStamp, Path styleFile) {
+        this.root = root;
         this.title = title;
         this.configError = configError;
         this.configStamp = configStamp;
+        this.treeColumns = treeColumns;
         this.lastStamp = configStamp.get();
         this.views = views == null ? new ViewRegistry() : views;
-        List<TreeColumn> cols = treeColumns == null || treeColumns.isEmpty()
-                ? HtmlRenderer.DEFAULT_TREE_COLUMNS : treeColumns;
+        this.style = styleFile == null ? null : new SwingStyle(styleFile);
         this.layout = Layout.fromCode(Splits.PREFS.get("layout", "v"));
         this.tableMode = "table".equals(Splits.PREFS.get("mode", "nav"));
 
-        nav = new NavTree(root, this::show);
-        navComponent = nav.component(title.get());
-        treeTable = new TreeTablePanel(root, cols, this::show, n -> nav.refresh(n));
-
-        header.setLayout(new BoxLayout(header, BoxLayout.Y_AXIS));
-        header.setBackground(Ui.PANEL);
-        header.setBorder(BorderFactory.createCompoundBorder(Ui.line(0, 0, 1, 0), Ui.pad(14, 28, 14, 28)));
-        content.setBackground(Ui.BG);
-        rootPanel.setBackground(Ui.BG);
+        if (style != null && style.current().scheme() == SwingStyle.Scheme.SYSTEM) {
+            systemDark = SwingStyle.systemPrefersDark();
+        }
+        applyStyle();
+        buildChrome(null, null);
         relayout();
         show(root);
     }
@@ -120,14 +137,21 @@ public final class SwingViewer {
         frame.setLocationRelativeTo(null);
         updateTitle();
         frame.setVisible(true);
-        // viewer.xml beobachten: geändert -> aktuelle Ansicht neu aufbauen
-        new javax.swing.Timer(1000, e -> {
-            Object stamp = configStamp.get();
-            if (!java.util.Objects.equals(stamp, lastStamp)) {
-                lastStamp = stamp;
-                if (current != null) show(current, message);
-            }
-        }).start();
+        // viewer.xml und swing.properties beobachten: geändert -> neu aufbauen
+        new javax.swing.Timer(1000, e -> checkForChanges()).start();
+        // Systemeinstellung hell/dunkel beobachten (nur bei farbschema = system)
+        Thread watcher = new Thread(this::watchSystemScheme, "Objekt-Viewer: Farbschema");
+        watcher.setDaemon(true);
+        watcher.start();
+    }
+
+    /**
+     * Prüft eine swing.properties (für {@code java -jar objektviewer.jar check}).
+     *
+     * @return Fehlermeldung mit Zeile, oder null wenn sie in Ordnung ist
+     */
+    public static String checkStyle(Path file) {
+        return new SwingStyle(file).error();
     }
 
     /** Der gesamte Inhalt, z. B. um ihn in ein eigenes Fenster einzubetten. */
@@ -137,7 +161,99 @@ public final class SwingViewer {
 
     /** Zeigt ein Objekt an (wie ein Klick in Navigation oder Baumtabelle). */
     public void show(ObjectNode node) {
+        draft = null;
+        invalid = null;
         show(node, null);
+    }
+
+    // ================================================================= Live-Änderungen
+
+    private void checkForChanges() {
+        boolean restyle = style != null && style.reload();
+        if (style != null && style.current().scheme() == SwingStyle.Scheme.SYSTEM && systemDark != dark) {
+            restyle = true;
+        }
+        Object stamp = configStamp.get();
+        boolean config = !Objects.equals(stamp, lastStamp);
+        lastStamp = stamp;
+        if (restyle) {
+            restyle();
+        } else if (config) {
+            if (!Objects.equals(effectiveColumns(), treeTable.columns())) {
+                // Spalten der Baumtabelle geändert: neu bauen, Aufgeklapptes und Filter bleiben
+                treeTable = newTreeTable(treeTable.state());
+            }
+            updateTitle();
+            rerender();
+        }
+    }
+
+    private void watchSystemScheme() {
+        while (true) {
+            try {
+                Thread.sleep(5000);
+            } catch (InterruptedException e) {
+                return;
+            }
+            if (style != null && style.current().scheme() == SwingStyle.Scheme.SYSTEM) {
+                systemDark = SwingStyle.systemPrefersDark();
+            }
+        }
+    }
+
+    private void applyStyle() {
+        SwingStyle.Settings s = style == null ? SwingStyle.Settings.DEFAULT : style.current();
+        dark = switch (s.scheme()) {
+            case DARK -> true;
+            case LIGHT -> false;
+            case SYSTEM -> systemDark;
+        };
+        Ui.apply(s, dark);
+    }
+
+    /** Neues Aussehen: alles neu aufbauen; Auswahl, Aufgeklapptes, Filter und Eingaben bleiben. */
+    private void restyle() {
+        rememberInput();
+        applyStyle();
+        if (frame != null) SwingUtilities.updateComponentTreeUI(frame);
+        buildChrome(nav.expandedNodes(), treeTable.state());
+        relayout();
+        show(current, message);
+    }
+
+    /** Navigation und Baumtabelle (neu) bauen; Zustand der alten wird übernommen. */
+    private void buildChrome(List<ObjectNode> expanded, TreeTablePanel.State tableState) {
+        nav = new NavTree(root, this::show);
+        if (expanded != null) nav.expand(expanded);
+        navComponent = nav.component(title.get());
+        treeTable = newTreeTable(tableState);
+        header.setLayout(new BoxLayout(header, BoxLayout.Y_AXIS));
+        header.setBackground(Ui.PANEL);
+        header.setBorder(BorderFactory.createCompoundBorder(Ui.line(0, 0, 1, 0), Ui.pad(14, 28, 14, 28)));
+        content.setBackground(Ui.BG);
+        rootPanel.setBackground(Ui.BG);
+    }
+
+    private TreeTablePanel newTreeTable(TreeTablePanel.State state) {
+        return new TreeTablePanel(root, effectiveColumns(), this::show, n -> nav.refresh(n), state);
+    }
+
+    private List<TreeColumn> effectiveColumns() {
+        List<TreeColumn> cols = treeColumns.get();
+        return cols == null || cols.isEmpty() ? HtmlRenderer.DEFAULT_TREE_COLUMNS : cols;
+    }
+
+    /** Aktuelle Ansicht neu aufbauen, ohne dass ungespeicherte Eingaben verloren gehen. */
+    private void rerender() {
+        rememberInput();
+        show(current, message);
+    }
+
+    private void rememberInput() {
+        if (frames != null && current != null) {
+            Map<String, List<String>> typed = frames.formValues();
+            if (!typed.isEmpty()) draft = typed;
+        }
     }
 
     // ================================================================= Aufbau
@@ -156,7 +272,7 @@ public final class SwingViewer {
             sp.setBorder(null);
             sp.setDividerSize(4);
             sp.setResizeWeight(0);
-            sp.setDividerLocation(Splits.PREFS.getInt("nav.width", 290));
+            sp.setDividerLocation(Splits.PREFS.getInt("nav.width", Ui.px(290)));
             sp.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY,
                     e -> Splits.PREFS.putInt("nav.width", sp.getDividerLocation()));
             navComponent.setMinimumSize(new Dimension(160, 100));
@@ -189,15 +305,16 @@ public final class SwingViewer {
         ObjectNode node = current;
         header.removeAll();
 
-        String cfgError = configError.get();
-        if (cfgError != null) {
+        for (String cfgError : new String[]{configError.get(), style == null ? null : style.error()}) {
+            if (cfgError == null) continue;
             Ui.FilledLabel err = new Ui.FilledLabel("<html>" + cfgError.replace("&", "&amp;").replace("<", "&lt;") + "</html>");
-            err.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 13));
+            err.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, Ui.px(13)));
             err.setForeground(Ui.ERR_FG);
             err.colors(Ui.ERR_BG, Ui.ERR_LINE);
             err.setBorder(Ui.pad(8, 12, 8, 12));
             err.setAlignmentX(Component.LEFT_ALIGNMENT);
             err.setMaximumSize(new Dimension(Integer.MAX_VALUE, err.getPreferredSize().height));
+            err.getAccessibleContext().setAccessibleDescription("Konfigurationsfehler");
             header.add(err);
             header.add(Box.createVerticalStrut(10));
         }
@@ -266,7 +383,7 @@ public final class SwingViewer {
         header.add(metaLabel);
 
         if (message != null) {
-            Ui.FilledLabel msg = new Ui.FilledLabel(message.text());
+            Ui.FilledLabel msg = new Ui.FilledLabel("<html>" + message.text().replace("&", "&amp;").replace("<", "&lt;") + "</html>");
             msg.setFont(Ui.font(Font.PLAIN, 14));
             msg.setForeground(message.error() ? Ui.ERR_FG : Ui.OK_FG);
             msg.colors(message.error() ? Ui.ERR_BG : Ui.OK_BG, message.error() ? Ui.ERR_LINE : Ui.OK_LINE);
@@ -283,6 +400,7 @@ public final class SwingViewer {
 
     private void setTableMode(boolean table) {
         if (tableMode == table) return;
+        rememberInput();
         tableMode = table;
         Splits.PREFS.put("mode", table ? "table" : "nav");
         relayout();
@@ -292,6 +410,7 @@ public final class SwingViewer {
 
     private void setLayout(Layout l) {
         if (layout == l) return;
+        rememberInput();
         layout = l;
         Splits.PREFS.put("layout", l.code());
         renderContent();
@@ -324,17 +443,19 @@ public final class SwingViewer {
         main.setBorder(Ui.pad(tableMode ? 10 : 24, 28, 20, 28));
 
         if (view != null) {
-            JComponent frames = new FramesPanel(node, view, layout, this::submit).build();
+            frames = new FramesPanel(node, view, layout, this::submit, draft, invalid);
+            JComponent framesComponent = frames.build();
             if (view.showChildren()) {
                 Splits s = new Splits("children." + view.name());
                 JComponent children = childrenSection(node);
                 children.setBorder(Ui.pad(16, 0, 0, 0));
-                main.add(s.split(JSplitPane.VERTICAL_SPLIT, frames, children, 0.76));
+                main.add(s.split(JSplitPane.VERTICAL_SPLIT, framesComponent, children, 0.76));
             } else {
-                main.add(frames);
+                main.add(framesComponent);
             }
             return main;
         }
+        frames = null;
 
         // Standarddarstellung: alle Felder, darunter die Unterobjekte
         Ui.ScrollColumn col = new Ui.ScrollColumn();
@@ -411,7 +532,7 @@ public final class SwingViewer {
             JScrollPane sp = new JScrollPane(t);
             sp.setBorder(BorderFactory.createLineBorder(Ui.LINE));
             sp.getViewport().setBackground(Ui.PANEL);
-            int h = ((javax.swing.JTable) t).getRowHeight() * kids.size() + 40;
+            int h = ((javax.swing.JTable) t).getRowHeight() * kids.size() + Ui.px(40);
             sp.setPreferredSize(new Dimension(400, h + 16));
             sp.setMaximumSize(new Dimension(Integer.MAX_VALUE, h + 16));
             sp.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -456,29 +577,38 @@ public final class SwingViewer {
 
     // ================================================================= Aktionen
 
-    /** Button oder Enter in einem Segment: Eingaben speichern, Aktion ausführen (im Hintergrund). */
+    /** Button oder Enter in einem Segment: prüfen, Eingaben speichern, Aktion ausführen (im Hintergrund). */
     private void submit(Map<String, List<String>> form, String buttonId) {
         ObjectNode node = current;
         NodeView view = views.resolve(node);
         rootPanel.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-        new SwingWorker<HtmlRenderer.Message, Void>() {
+        new SwingWorker<FormSubmit.Result, Void>() {
             @Override
-            protected HtmlRenderer.Message doInBackground() {
-                return FormSubmit.submit(node, view, form, buttonId);
+            protected FormSubmit.Result doInBackground() {
+                return FormSubmit.check(node, view, form, buttonId);
             }
 
             @Override
             protected void done() {
                 rootPanel.setCursor(Cursor.getDefaultCursor());
-                HtmlRenderer.Message result;
+                FormSubmit.Result result;
                 try {
                     result = get();
                 } catch (InterruptedException | ExecutionException e) {
-                    result = new HtmlRenderer.Message("Fehler: " + e.getCause(), true);
+                    result = new FormSubmit.Result(new HtmlRenderer.Message("Fehler: " + e.getCause(), true), null);
                 }
                 treeTable.refresh();
                 nav.repaint();
-                if (current == node) show(node, result);
+                if (current != node) return;
+                if (result.ok()) {
+                    draft = null;
+                    invalid = null;
+                } else {
+                    // nichts gespeichert: Eingaben stehen lassen, ungültige Felder markieren
+                    draft = form;
+                    invalid = result.invalid();
+                }
+                show(node, result.message());
             }
         }.execute();
     }
@@ -503,7 +633,7 @@ public final class SwingViewer {
                 }
                 nav.refresh(node);
                 treeTable.refresh();
-                if (current == node) show(node, message);
+                if (current == node) rerender();
             }
         }.execute();
     }
@@ -513,6 +643,7 @@ public final class SwingViewer {
         loadErrors.remove(node);
         nav.refresh(node);
         treeTable.forgetExpansion(node);
-        show(node);
+        rememberInput();
+        show(node, null);
     }
 }

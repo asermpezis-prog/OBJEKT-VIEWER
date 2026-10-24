@@ -38,6 +38,9 @@
              <fields select="remaining"/>         alle Felder, die sonst nirgends in der Ansicht stehen
              <text key="A" label="…" rows="1"/>   Eingabefeld (rows > 1: mehrzeilig)
              <output key="A" label="…"/>          nur Anzeige
+             <number key="A" decimals="2" min="0" max="1.000.000" unit="€"/>   Zahl mit Prüfung
+             <date key="A"/>                       Datum TT.MM.JJJJ mit Prüfung
+             <check key="A"/>                      Checkbox, gespeichert ja / nein
              <combo key="A" options="x | y"/>     Dropdown; free="true" = freie Eingabe erlaubt;
                                                   source="name" = Werte aus dem Code statt options
              <list key="A" options="x | y" multiple="true" rows="4"/>   sichtbare Liste

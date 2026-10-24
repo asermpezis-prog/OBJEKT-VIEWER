@@ -1,13 +1,16 @@
 package de.objektbaum.swing;
 
 import de.objektbaum.Button;
+import de.objektbaum.CheckBox;
 import de.objektbaum.Column;
 import de.objektbaum.ComboBox;
 import de.objektbaum.ComboList;
+import de.objektbaum.DateField;
 import de.objektbaum.Element;
 import de.objektbaum.FieldTable;
 import de.objektbaum.HtmlRenderer;
 import de.objektbaum.NodeView;
+import de.objektbaum.NumberField;
 import de.objektbaum.ObjectNode;
 import de.objektbaum.Segment;
 import de.objektbaum.TextField;
@@ -17,6 +20,7 @@ import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -28,6 +32,7 @@ import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingConstants;
+import javax.swing.border.Border;
 import javax.swing.text.JTextComponent;
 import java.awt.BorderLayout;
 import java.awt.Component;
@@ -37,6 +42,8 @@ import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -50,7 +57,7 @@ import java.util.function.Supplier;
 
 /**
  * Die Frames einer {@link NodeView}: bis zu 3 Spalten mit Segmenten, alle Trennlinien verschiebbar.
- * Segmente enthalten Tabellen, Textfelder, ComboBoxen, ComboListen und Buttons.
+ * Segmente enthalten Tabellen, Text-, Zahlen- und Datumsfelder, Checkboxen, ComboBoxen, ComboListen und Buttons.
  */
 final class FramesPanel {
 
@@ -59,38 +66,54 @@ final class FramesPanel {
     private final HtmlRenderer.Layout pageLayout;
     /** Wird bei Button-Klick bzw. Enter aufgerufen: (Formularwerte, Button-Id oder ""). */
     private final BiConsumer<Map<String, List<String>>, String> submit;
+    /** Eingaben, die statt der Feldwerte gezeigt werden (z. B. nach einer abgelehnten Prüfung), oder leer. */
+    private final Map<String, List<String>> draft;
+    /** Ungültige Eingaben: Key → Fehlertext; diese Felder werden rot markiert. */
+    private final Map<String, String> invalid;
     /** Liest die aktuellen Werte der editierbaren Eingaben. */
     private final Map<String, Supplier<List<String>>> readers = new LinkedHashMap<>();
     private final List<JButton> buttons = new ArrayList<>();
 
     FramesPanel(ObjectNode node, NodeView view, HtmlRenderer.Layout pageLayout,
                 BiConsumer<Map<String, List<String>>, String> submit) {
+        this(node, view, pageLayout, submit, null, null);
+    }
+
+    FramesPanel(ObjectNode node, NodeView view, HtmlRenderer.Layout pageLayout,
+                BiConsumer<Map<String, List<String>>, String> submit,
+                Map<String, List<String>> draft, Map<String, String> invalid) {
         this.node = node;
         this.view = view;
         this.pageLayout = pageLayout;
         this.submit = submit;
+        this.draft = draft == null ? Map.of() : draft;
+        this.invalid = invalid == null ? Map.of() : invalid;
     }
 
-    /** Baut die Frames. Größen werden pro Ansicht gespeichert. */
+    /** Baut die Frames. Größen werden pro Ansicht und Trennlinie (nach Segmenttiteln) gespeichert. */
     JComponent build() {
         Map<String, Object> fields = node.fields();
         Splits splits = new Splits("frames." + view.name());
         List<JComponent> cols = new ArrayList<>();
         List<Double> widths = new ArrayList<>();
+        List<String> colNames = new ArrayList<>();
         List<Column> columns = view.columns();
         for (int ci = 0; ci < columns.size(); ci++) {
             Column col = columns.get(ci);
             List<JComponent> segs = new ArrayList<>();
             List<Double> heights = new ArrayList<>();
+            List<String> titles = new ArrayList<>();
             for (int si = 0; si < col.segments().size(); si++) {
                 Segment seg = col.segments().get(si);
                 segs.add(segment(seg, fields, ci, si));
                 heights.add(seg.height());
+                titles.add(seg.title());
             }
-            cols.add(splits.chain(segs, heights, JSplitPane.VERTICAL_SPLIT));
+            cols.add(splits.chain(segs, heights, JSplitPane.VERTICAL_SPLIT, titles));
             widths.add(col.width());
+            colNames.add(String.join("/", titles));
         }
-        JComponent frames = splits.chain(cols, widths, JSplitPane.HORIZONTAL_SPLIT);
+        JComponent frames = splits.chain(cols, widths, JSplitPane.HORIZONTAL_SPLIT, colNames);
         JPanel outer = new JPanel(new BorderLayout());
         outer.add(frames);
         outer.setBorder(new Ui.RoundBorder(Ui.LINE, null, 10, new Insets(0, 0, 0, 0)));
@@ -99,7 +122,7 @@ final class FramesPanel {
     }
 
     /** Werte aller editierbaren Eingaben, wie sie ein Formular abschicken würde. */
-    private Map<String, List<String>> formValues() {
+    Map<String, List<String>> formValues() {
         Map<String, List<String>> form = new LinkedHashMap<>();
         readers.forEach((k, r) -> form.put(k, r.get()));
         return form;
@@ -183,15 +206,32 @@ final class FramesPanel {
 
     // ---------------------------------------------------------------- Eingaben
 
-    private void addInput(JPanel grid, Element.Input in, Object value) {
-        int row = grid.getComponentCount() / 2;
+    /** Anzuzeigender Wert: Entwurf (falls vorhanden), sonst der Feldwert. */
+    private Object shownValue(Element.Input in, Object fieldValue) {
+        List<String> d = draft.get(in.key());
+        if (d == null || !in.editable()) return fieldValue;
+        if (in instanceof ComboList cl && cl.multiSelect()) return d;
+        return d.isEmpty() ? "" : d.get(0);
+    }
+
+    private static String text(Object value) {
+        return value == null ? "" : HtmlRenderer.text(value);
+    }
+
+    private void addInput(JPanel grid, Element.Input in, Object fieldValue) {
+        Object value = shownValue(in, fieldValue);
+        Integer rowObj = (Integer) grid.getClientProperty("rows");
+        int row = rowObj == null ? 0 : rowObj;
         JLabel label = Ui.label(in.label(), Font.BOLD, 13, Ui.MUTED);
         label.setVerticalAlignment(SwingConstants.TOP);
         JComponent field;
         Supplier<List<String>> reader = null;
+        /** Komponente, deren Rahmen bei einem Fehler rot wird. */
+        JComponent marked;
+        JLabel error = Ui.label("", Font.PLAIN, 12, Ui.danger());
 
         if (in instanceof TextField tf) {
-            String v = value == null ? "" : HtmlRenderer.text(value);
+            String v = text(value);
             if (tf.rows() > 1) {
                 JTextArea ta = new JTextArea(v, tf.rows(), 20);
                 ta.setLineWrap(true);
@@ -200,20 +240,63 @@ final class FramesPanel {
                 JScrollPane sp = new JScrollPane(ta);
                 sp.setBorder(BorderFactory.createLineBorder(Ui.LINE));
                 field = sp;
+                marked = sp;
                 reader = () -> List.of(ta.getText());
             } else {
-                JTextField t = new JTextField(v, 20);
-                styleText(t, tf.editable());
-                t.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Ui.LINE), Ui.pad(5, 8, 5, 8)));
-                if (tf.editable()) {
-                    // Enter = nur speichern (wie im Browser)
-                    t.addActionListener(e -> submit.accept(formValues(), ""));
-                }
+                JTextField t = textField(v, tf.editable());
                 field = t;
+                marked = t;
                 reader = () -> List.of(t.getText());
             }
+        } else if (in instanceof NumberField nf) {
+            JTextField t = textField(text(value), nf.editable());
+            t.setHorizontalAlignment(SwingConstants.RIGHT);
+            t.setColumns(12);
+            if (nf.editable()) {
+                t.setToolTipText("Zahl, z. B. 150.000,00 – " + nf.decimals() + " Nachkommastellen"
+                        + (nf.min() != null ? ", ab " + NumberField.format(nf.min(), nf.decimals()) : "")
+                        + (nf.max() != null ? ", bis " + NumberField.format(nf.max(), nf.decimals()) : ""));
+                checkOnFocusLost(t, t, error, nf);
+            }
+            field = withSuffix(t, nf.unit().isEmpty() ? null : Ui.label(nf.unit(), Font.PLAIN, 13, Ui.MUTED));
+            marked = t;
+            reader = () -> List.of(t.getText());
+        } else if (in instanceof DateField df) {
+            JTextField t = textField(text(value), df.editable());
+            t.setColumns(10);
+            JComponent suffix = null;
+            if (df.editable()) {
+                t.setToolTipText("Datum TT.MM.JJJJ, z. B. 2.9.2026 – oder Kalender öffnen");
+                checkOnFocusLost(t, t, error, df);
+                JButton cal = Ui.button(Ui.sym("📅", "…"), false);
+                cal.setFont(Ui.font(Font.PLAIN, 13));
+                cal.setBorder(Ui.pad(4, 9, 4, 9));
+                cal.setToolTipText("Kalender öffnen");
+                cal.getAccessibleContext().setAccessibleName("Kalender für " + df.label());
+                cal.addActionListener(e -> DatePopup.show(cal, DateField.parse(t.getText()), d -> {
+                    t.setText(DateField.GERMAN.format(d));
+                    clearError(t, error);
+                    t.requestFocusInWindow();
+                }));
+                suffix = cal;
+            }
+            field = withSuffix(t, suffix);
+            marked = t;
+            reader = () -> List.of(t.getText());
+        } else if (in instanceof CheckBox cb) {
+            JCheckBox box = new JCheckBox();
+            box.setSelected(CheckBox.isChecked(value));
+            box.setEnabled(cb.editable());
+            box.setOpaque(false);
+            box.setIcon(new Ui.CheckIcon());
+            box.setFocusPainted(false);
+            box.setBorder(Ui.pad(5, 0, 5, 0));
+            box.getAccessibleContext().setAccessibleName(cb.label());
+            field = box;
+            marked = box;
+            reader = () -> List.of(box.isSelected() ? CheckBox.YES : CheckBox.NO);
         } else if (in instanceof ComboBox cb) {
-            String v = value == null ? "" : HtmlRenderer.text(value);
+            String v = text(value);
             List<String> options = cb.options().options(node);
             JComboBox<String> box = new JComboBox<>();
             if (!cb.allowFreeInput()) box.addItem("");
@@ -235,7 +318,14 @@ final class FramesPanel {
                 }
             });
             box.setBackground(Ui.PANEL);
+            box.setForeground(Ui.FG);
+            if (box.getEditor().getEditorComponent() instanceof JTextField ed) {
+                ed.setBackground(Ui.PANEL);
+                ed.setForeground(Ui.FG);
+                ed.setCaretColor(Ui.FG);
+            }
             field = box;
+            marked = box;
             reader = () -> {
                 Object sel = cb.allowFreeInput() ? box.getEditor().getItem() : box.getSelectedItem();
                 return List.of(sel == null ? "" : String.valueOf(sel));
@@ -258,15 +348,20 @@ final class FramesPanel {
             for (int i = 0; i < model.size(); i++) if (current.contains(model.get(i))) idx.add(i);
             list.setSelectedIndices(idx.stream().mapToInt(Integer::intValue).toArray());
             list.setEnabled(cl.editable());
-            list.setFixedCellHeight(24);
+            list.setFixedCellHeight(Ui.px(24));
             list.setBorder(Ui.pad(2, 6, 2, 6));
+            list.setBackground(Ui.PANEL);
+            list.setForeground(Ui.FG);
+            list.setSelectionBackground(Ui.LIST_SEL);
+            list.setSelectionForeground(Ui.FG);
             JScrollPane sp = new JScrollPane(list);
             sp.setBorder(BorderFactory.createLineBorder(Ui.LINE));
             field = sp;
+            marked = sp;
             reader = () -> List.copyOf(list.getSelectedValuesList());
             if (cl.multiSelect() && cl.editable()) {
-                label.setText("<html>" + esc(cl.label()) + "<br><span style='font-weight:normal;font-size:9px'>"
-                        + "Mehrfachauswahl: Strg/Cmd + Klick</span></html>");
+                label.setText("<html>" + esc(cl.label()) + "<br><span style='font-weight:normal;font-size:"
+                        + Math.round(9 * Ui.SCALE) + "px'>Mehrfachauswahl: Strg/Cmd + Klick</span></html>");
             }
         } else {
             return;
@@ -275,7 +370,12 @@ final class FramesPanel {
         if (in.editable() && reader != null) {
             readers.put(in.key(), reader);
         }
-        label.setLabelFor(field);
+        label.setLabelFor(field instanceof JPanel p && p.getComponentCount() > 0 ? (Component) p.getComponent(0) : field);
+
+        String problem = invalid.get(in.key());
+        if (problem != null) {
+            showError(marked, error, problem);
+        }
 
         GridBagConstraints c = new GridBagConstraints();
         c.gridy = row;
@@ -289,6 +389,73 @@ final class FramesPanel {
         c.fill = GridBagConstraints.HORIZONTAL;
         c.insets = new Insets(row == 0 ? 0 : 8, 0, 0, 0);
         grid.add(field, c);
+        // Fehlertext unter dem Feld (leer, solange alles stimmt)
+        c.gridy = row + 1;
+        c.insets = new Insets(2, 0, 0, 0);
+        error.setVisible(problem != null);
+        grid.add(error, c);
+        grid.putClientProperty("rows", row + 2);
+    }
+
+    private JTextField textField(String v, boolean editable) {
+        JTextField t = new JTextField(v, 20);
+        styleText(t, editable);
+        t.setBorder(normalBorder());
+        if (editable) {
+            // Enter = nur speichern (wie im Browser)
+            t.addActionListener(e -> submit.accept(formValues(), ""));
+        }
+        return t;
+    }
+
+    /** Feld mit etwas dahinter (Einheit, Kalender-Button); ohne suffix das Feld selbst. */
+    private static JComponent withSuffix(JComponent field, JComponent suffix) {
+        if (suffix == null) return field;
+        JPanel p = new JPanel(new BorderLayout(8, 0));
+        p.setOpaque(false);
+        p.add(field, BorderLayout.CENTER);
+        p.add(suffix, BorderLayout.EAST);
+        return p;
+    }
+
+    /** Prüft beim Verlassen des Felds; gültig = einheitlich formatieren, sonst rot markieren. */
+    private static void checkOnFocusLost(JTextField t, JComponent marked, JLabel error, Element.Input in) {
+        t.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                try {
+                    String normalized = in.check(t.getText());
+                    if (!normalized.equals(t.getText())) t.setText(normalized);
+                    clearError(marked, error);
+                } catch (IllegalArgumentException ex) {
+                    showError(marked, error, ex.getMessage());
+                }
+            }
+        });
+    }
+
+    private static Border normalBorder() {
+        return BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Ui.LINE), Ui.pad(5, 8, 5, 8));
+    }
+
+    private static void showError(JComponent marked, JLabel error, String message) {
+        Border red = BorderFactory.createLineBorder(Ui.danger(), 2);
+        marked.setBorder(marked instanceof JTextField
+                ? BorderFactory.createCompoundBorder(red, Ui.pad(4, 7, 4, 7)) : red);
+        marked.putClientProperty("invalid", Boolean.TRUE);
+        marked.getAccessibleContext().setAccessibleDescription("Fehler: " + message);
+        error.setText(message);
+        error.setVisible(true);
+        if (error.getParent() != null) error.getParent().revalidate();
+    }
+
+    private static void clearError(JComponent marked, JLabel error) {
+        if (marked.getClientProperty("invalid") == null) return;
+        marked.putClientProperty("invalid", null);
+        marked.setBorder(marked instanceof JTextField ? normalBorder() : BorderFactory.createLineBorder(Ui.LINE));
+        marked.getAccessibleContext().setAccessibleDescription(null);
+        error.setVisible(false);
+        if (error.getParent() != null) error.getParent().revalidate();
     }
 
     private static void styleText(JTextComponent t, boolean editable) {
@@ -296,6 +463,9 @@ final class FramesPanel {
         t.setFont(Ui.font(Font.PLAIN, 14));
         t.setForeground(editable ? Ui.FG : Ui.MUTED);
         t.setBackground(editable ? Ui.PANEL : Ui.ZEBRA);
+        t.setCaretColor(Ui.FG);
+        t.setSelectionColor(Ui.LIST_SEL);
+        t.setSelectedTextColor(Ui.FG);
         t.setBorder(Ui.pad(5, 8, 5, 8));
     }
 

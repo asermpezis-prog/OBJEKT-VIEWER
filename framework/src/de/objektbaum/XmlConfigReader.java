@@ -34,6 +34,7 @@ import java.util.Set;
  *         &lt;segment title="…" height="1" layout="vertical|horizontal"&gt;
  *           &lt;fields keys="A | B" /&gt;  &lt;fields select="all|remaining"/&gt;
  *           &lt;text key="…" label="…" rows="1"/&gt;  &lt;output key="…"/&gt;
+ *           &lt;number key="…" decimals="2" min="0" max="…" unit="€"/&gt;  &lt;date key="…"/&gt;  &lt;check key="…"/&gt;
  *           &lt;combo key="…" options="a | b" source="…" free="false"/&gt;
  *           &lt;list key="…" options="a | b" multiple="true" rows="4"/&gt;
  *           &lt;button label="…" action="…"/&gt;
@@ -193,6 +194,23 @@ public final class XmlConfigReader {
                 TextField tf = new TextField(required(e, "key"), e.attrs.get("label"), editable, integer(e, "rows", 1, 1));
                 return tf;
             }
+            case "number": {
+                allowed(e, "key", "label", "decimals", "min", "max", "unit", "editable");
+                try {
+                    return new NumberField(required(e, "key"), e.attrs.get("label"), integer(e, "decimals", 2, 0),
+                            number(e, "min"), number(e, "max"), e.attrs.get("unit"), bool(e, "editable", true));
+                } catch (IllegalArgumentException ex) {
+                    throw new ConfigException(e.line, ex.getMessage());
+                }
+            }
+            case "date": {
+                allowed(e, "key", "label", "editable");
+                return new DateField(required(e, "key"), e.attrs.get("label"), bool(e, "editable", true));
+            }
+            case "check": {
+                allowed(e, "key", "label", "editable");
+                return new CheckBox(required(e, "key"), e.attrs.get("label"), bool(e, "editable", true));
+            }
             case "combo": {
                 allowed(e, "key", "label", "options", "source", "free", "editable");
                 OptionSource src = optionSource(e);
@@ -223,7 +241,7 @@ public final class XmlConfigReader {
             }
             default:
                 throw new ConfigException(e.line, "Unbekanntes Element <" + e.name + "> in <segment>. "
-                        + "Erlaubt: <fields>, <text>, <output>, <combo>, <list>, <button>");
+                        + "Erlaubt: <fields>, <text>, <output>, <number>, <date>, <check>, <combo>, <list>, <button>");
         }
     }
 
@@ -299,6 +317,16 @@ public final class XmlConfigReader {
             return i;
         } catch (NumberFormatException e) {
             throw new ConfigException(n.line, attr + "=\"" + v + "\" in <" + n.name + ">: ganze Zahl ab " + min + " erwartet");
+        }
+    }
+
+    private static java.math.BigDecimal number(Node n, String attr) throws ConfigException {
+        String v = n.attrs.get(attr);
+        if (v == null || v.isBlank()) return null;
+        try {
+            return NumberField.parse(v);
+        } catch (NumberFormatException e) {
+            throw new ConfigException(n.line, attr + "=\"" + v + "\" in <" + n.name + ">: Zahl erwartet, z. B. 0 oder 1.000.000,00");
         }
     }
 

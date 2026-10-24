@@ -16,8 +16,12 @@ import java.util.prefs.Preferences;
 
 /**
  * Verschachtelte, verschiebbare Bereiche wie bei Frames. Startgrößen als relative Gewichte,
- * vom Benutzer geänderte Größen werden pro Schlüssel gespeichert (Java Preferences),
+ * vom Benutzer geänderte Größen werden pro Trennlinie gespeichert (Java Preferences),
  * Doppelklick auf eine Trennlinie setzt alle Bereiche der Gruppe zurück.
+ *
+ * <p>Bei {@link #chain(List, List, int, List)} heißt jede Trennlinie nach dem, was links/oben und
+ * rechts/unten von ihr liegt (z. B. Segmenttitel). Ändert sich in viewer.xml die Anzahl oder Reihenfolge,
+ * gelten für geänderte Trennlinien wieder die Startgrößen – gespeicherte Werte landen nie an falscher Stelle.
  */
 final class Splits {
 
@@ -26,6 +30,7 @@ final class Splits {
     private final String key;
     private final List<JSplitPane> panes = new ArrayList<>();
     private final List<Double> defaults = new ArrayList<>();
+    private final List<String> prefKeys = new ArrayList<>();
 
     /** @param key Schlüssel zum Speichern, z. B. "frames.Variante" */
     Splits(String key) {
@@ -39,26 +44,57 @@ final class Splits {
      * @param weights     relative Größen, gleiche Anzahl wie comps
      */
     JComponent chain(List<? extends JComponent> comps, List<Double> weights, int orientation) {
+        List<String> names = new ArrayList<>();
+        for (int i = 0; i < comps.size(); i++) names.add(String.valueOf(panes.size() + i));
+        return chain(comps, weights, orientation, names);
+    }
+
+    /**
+     * Wie {@link #chain(List, List, int)}, Trennlinien heißen nach den Namen der Bereiche.
+     *
+     * @param names ein Name je Bereich (z. B. Segmenttitel), gleiche Anzahl wie comps
+     */
+    JComponent chain(List<? extends JComponent> comps, List<Double> weights, int orientation, List<String> names) {
         if (comps.size() == 1) {
             return comps.get(0);
         }
         double total = weights.stream().mapToDouble(Double::doubleValue).sum();
-        JComponent rest = chain(comps.subList(1, comps.size()), weights.subList(1, weights.size()), orientation);
-        return split(orientation, comps.get(0), rest, weights.get(0) / total);
+        JComponent rest = chain(comps.subList(1, comps.size()), weights.subList(1, weights.size()), orientation,
+                names.subList(1, names.size()));
+        String id = (orientation == JSplitPane.HORIZONTAL_SPLIT ? "h:" : "v:") + names.get(0)
+                + "|" + String.join("+", names.subList(1, names.size()));
+        return split(orientation, comps.get(0), rest, weights.get(0) / total, id);
     }
 
     /** Eine einzelne Trennung zwischen a und b; weight = Anteil von a. */
     JSplitPane split(int orientation, JComponent a, JComponent b, double weight) {
+        return split(orientation, a, b, weight, String.valueOf(panes.size()));
+    }
+
+    /**
+     * Schlüssel für Java Preferences: höchstens 80 Zeichen ({@link Preferences#MAX_KEY_LENGTH}),
+     * längere Namen werden gekürzt und mit einer Prüfsumme eindeutig gemacht.
+     */
+    static String prefKey(String key) {
+        if (key.length() <= Preferences.MAX_KEY_LENGTH) return key;
+        java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+        crc.update(key.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String sum = "#" + Long.toHexString(crc.getValue());
+        return key.substring(0, Preferences.MAX_KEY_LENGTH - sum.length()) + sum;
+    }
+
+    /** Eine einzelne Trennung zwischen a und b; weight = Anteil von a; id benennt die Trennlinie. */
+    JSplitPane split(int orientation, JComponent a, JComponent b, double weight, String id) {
         JSplitPane sp = new JSplitPane(orientation, true, a, b);
         sp.setUI(new FlatSplitUI());
         sp.setBorder(null);
         sp.setDividerSize(5);
         sp.setResizeWeight(weight);
         sp.setOpaque(false);
-        int index = panes.size();
         panes.add(sp);
         defaults.add(weight);
-        String prefKey = key + "." + index;
+        String prefKey = prefKey(key + "." + id);
+        prefKeys.add(prefKey);
 
         boolean[] applied = {false};
         sp.addComponentListener(new ComponentAdapter() {
@@ -108,7 +144,7 @@ final class Splits {
     /** Alle Bereiche dieser Gruppe auf die Startgrößen zurücksetzen und Gespeichertes löschen. */
     void reset() {
         for (int i = 0; i < panes.size(); i++) {
-            PREFS.remove(key + "." + i);
+            PREFS.remove(prefKeys.get(i));
             panes.get(i).setDividerLocation(defaults.get(i));
         }
     }
@@ -154,7 +190,7 @@ final class Splits {
         @Override
         protected void installDefaults() {
             super.installDefaults();
-            splitPane.setBackground(Color.WHITE);
+            splitPane.setBackground(Ui.PANEL);
         }
     }
 }
